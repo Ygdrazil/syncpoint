@@ -1,0 +1,329 @@
+// Everything else: badges, dialogs, the log, progress, menus.
+
+.setting {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.9rem 0;
+  border-bottom: 1px solid var(--border);
+  max-width: 520px;
+}
+
+.setting:last-of-type {
+  border-bottom: none;
+}
+
+.setting .title {
+  font-size: 0.88rem;
+  font-weight: 550;
+}
+
+.conn-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.conn-row:last-of-type {
+  border-bottom: none;
+}
+
+.conn-row .grow {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.badge {
+  font-size: 0.72rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.badge.warn {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.badge.error {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.notice {
+  font-size: 0.76rem;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--muted);
+}
+
+.dot.idle {
+  background: var(--ok);
+}
+
+.dot.pending {
+  background: var(--warn);
+}
+
+.dot.syncing {
+  background: var(--accent);
+}
+
+.dot.error {
+  background: var(--danger);
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.45rem 0.55rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* Detail --------------------------------------------------------------- */
+
+.detail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.titles h2 {
+  margin-bottom: 0.35rem;
+}
+
+.path {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.76rem;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.chip {
+  font-size: 0.72rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.chip.idle {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.chip.pending {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.chip.syncing {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.chip.error {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  margin: 1rem 0 0;
+  padding: 0;
+}
+
+.facts dt {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.facts dd {
+  margin: 0.15rem 0 0;
+  font-size: 0.82rem;
+}
+
+.usage {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.usage li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+}
+
+.muted-line {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.alert {
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.8rem;
+  margin: 0.9rem 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.alert.ok {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.log {
+  margin: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.7rem;
+  height: 300px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+}
+
+.log span {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.log .stderr {
+  color: var(--danger);
+}
+
+.log .meta {
+  color: var(--accent);
+}
+
+.log .muted {
+  color: var(--muted);
+}
+
+.placeholder {
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  height: 100%;
+  text-align: center;
+}
+
+.placeholder .stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+/* Transfer progress ------------------------------------------------------ */
+
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 1rem;
+  max-width: 520px;
+}
+
+.progress .track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.progress .fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.2s ease-out;
+}
+
+.progress-note {
+  margin-top: 1rem;
+}
+
+/* Right-click menu ------------------------------------------------------- */
+
+.context-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 160px;
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.25);
+}
+
+.context-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  border-radius: 5px;
+  padding: 0.35rem 0.55rem;
+}
+
+.context-menu button:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+}
+
+.context-menu button.danger:hover:not(:disabled) {
+  background: var(--danger);
+  color: #fff;
+}

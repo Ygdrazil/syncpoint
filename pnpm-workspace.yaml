@@ -1,3 +1,5 @@
 # esbuild's install script fetches its platform binary; vite needs it.
 allowBuilds:
+  # Only used by `sass --watch`; Vite compiles through the JS API instead.
+  '@parcel/watcher': false
   esbuild: true

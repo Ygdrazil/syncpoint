@@ -212,11 +212,14 @@ mod tests {
         }
     }
 
-    /// A variant with no stylesheet block would fall through to the default
-    /// palette and look silently broken, so the two are pinned together.
+    /// A variant with no entry in the theme map falls through to the default
+    /// palette and looks broken for no visible reason, so the two are pinned
+    /// together. The map is the single place themes are defined, which is why
+    /// this reads the stylesheet source rather than compiled CSS.
     #[test]
-    fn every_explicit_theme_has_a_stylesheet_block() {
-        let css = std::fs::read_to_string("../src/app.css").expect("app.css beside the crate");
+    fn every_explicit_theme_has_a_palette() {
+        let scss = std::fs::read_to_string("../src/styles/_themes.scss")
+            .expect("theme stylesheet beside the crate");
         for theme in [
             Theme::Light,
             Theme::Dark,
@@ -226,13 +229,12 @@ mod tests {
             Theme::CatppuccinMocha,
         ] {
             let serialized = serde_json::to_string(&theme).unwrap();
-            let name = serialized.trim_matches('"');
-            let selector = format!("[data-theme=\"{name}\"]");
-            assert!(css.contains(&selector), "no CSS block for theme {name}");
+            let key = format!("{}:", serialized); // e.g. "catppuccin-mocha":
+            assert!(scss.contains(&key), "no palette for theme {serialized}");
         }
-        // System is the one theme with no block: the CSS keys "follow the OS"
-        // on the attribute being absent entirely.
-        assert!(!css.contains("[data-theme=\"system\"]"));
+        // System is the absence of a choice, not a palette: the stylesheet keys
+        // "follow the OS" on data-theme being missing entirely.
+        assert!(!scss.contains("\"system\":"));
     }
 
     #[test]

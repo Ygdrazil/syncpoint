@@ -3,7 +3,7 @@
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import * as api from "$lib/api";
   import { applyTheme } from "$lib/theme";
-  import "../app.css";
+  import "../app.scss";
 
   let { children } = $props();
 

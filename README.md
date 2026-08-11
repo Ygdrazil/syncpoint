@@ -110,6 +110,15 @@ cargo test --lib --manifest-path src-tauri/Cargo.toml
 pnpm check
 ```
 
+Styles are SCSS under `src/styles/`, entry point `src/app.scss`.
+
+Adding a theme is one entry in `$themes` in
+[`src/styles/_themes.scss`](src/styles/_themes.scss) — the selector, the
+`color-scheme` hint and the system fallback are all emitted from it. Add a
+matching variant to `Theme` in `src-tauri/src/settings.rs`, an entry in
+`NATIVE` in `src/lib/theme.ts`, and a label in `SettingsGeneral.svelte`. A test
+fails if a variant has no palette.
+
 To regenerate the bundle icons from `assets/logo.png`:
 
 ```bash
