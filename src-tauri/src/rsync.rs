@@ -364,23 +364,49 @@ pub async fn run(
     }
 }
 
-fn explain(code: i32, stderr: &[String]) -> String {
-    let detail = stderr
+/// rsync's last stderr line is always its generic trailer
+/// (`rsync error: ... at main.c(791)`), which names the error class but never
+/// the cause. The line before it is the one that says what actually happened,
+/// so the trailer is skipped whenever anything more specific was printed.
+fn most_useful_lines(stderr: &[String]) -> Vec<&String> {
+    let meaningful: Vec<&String> = stderr
         .iter()
-        .rev()
-        .find(|l| !l.trim().is_empty())
-        .cloned()
-        .unwrap_or_default();
+        .filter(|l| !l.trim().is_empty())
+        .filter(|l| {
+            let t = l.trim_start();
+            !t.starts_with("rsync error:") && !t.starts_with("rsync warning:")
+        })
+        .collect();
 
+    // Fall back to the trailer only when it was the sole output.
+    if meaningful.is_empty() {
+        stderr.iter().filter(|l| !l.trim().is_empty()).rev().take(1).collect()
+    } else {
+        // The tail carries the failure; earlier lines are usually per-file noise.
+        meaningful.into_iter().rev().take(2).rev().collect()
+    }
+}
+
+fn explain(code: i32, stderr: &[String]) -> String {
     let hint = match code {
         1 => "rsync usage error — check the excludes and paths.",
         2 => "Protocol mismatch between local and remote rsync.",
+        11 => "The remote side could not read or write the destination. Usually the remote \
+               directory does not exist, its parent is missing, or the SSH user cannot write \
+               there.",
         12 => "Protocol error, usually a failed SSH session or no rsync on the remote host.",
+        13 => "Permission denied on the remote side.",
         23 => "Partial transfer — some files could not be sent (permissions?).",
         30 => "Timed out waiting on the remote host.",
         255 => "SSH connection failed. With BatchMode on, key auth must already work: try `ssh <user>@<host>` once by hand to accept the host key and confirm the key is loaded.",
         _ => "rsync failed.",
     };
+
+    let detail = most_useful_lines(stderr)
+        .into_iter()
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join(" / ");
 
     if detail.is_empty() {
         format!("{hint} (exit {code})")
@@ -601,6 +627,33 @@ mod tests {
         ] {
             assert!(parse_progress(line).is_none(), "wrongly parsed: {line:?}");
         }
+    }
+
+    #[test]
+    fn the_cause_is_reported_not_just_rsyncs_trailer() {
+        // Real output: the trailer names the error class, the line above it
+        // names the cause. Reporting only the trailer is what made an exit 11
+        // unactionable.
+        let stderr = vec![
+            "rsync: [Receiver] mkdir \"/srv/apps/site\" failed: Permission denied (13)".to_string(),
+            "rsync error: error in file IO (code 11) at main.c(791) [Receiver=3.2.7]".to_string(),
+        ];
+        let message = explain(11, &stderr);
+        assert!(message.contains("Permission denied"), "cause missing from: {message}");
+        assert!(message.contains("exit 11"));
+    }
+
+    #[test]
+    fn the_trailer_is_still_shown_when_it_is_all_there_is() {
+        let stderr = vec!["rsync error: some failure at main.c(1)".to_string()];
+        assert!(explain(11, &stderr).contains("some failure"));
+    }
+
+    #[test]
+    fn an_empty_stderr_still_produces_a_hint() {
+        let message = explain(11, &[]);
+        assert!(message.contains("exit 11"));
+        assert!(message.contains("could not read or write"));
     }
 
     #[test]
