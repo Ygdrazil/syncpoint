@@ -110,18 +110,10 @@ cargo test --lib --manifest-path src-tauri/Cargo.toml
 pnpm check
 ```
 
-Icons and themes are generated rather than hand-edited:
+To regenerate the bundle icons from `assets/logo.png`:
 
 ```bash
-python3 scripts/generate-app-icon.py assets/logo.png && pnpm tauri icon assets/logo.png
-```
-
-```bash
-python3 scripts/generate-tray-icons.py src-tauri/icons
-```
-
-```bash
-python3 scripts/generate-catppuccin-css.py
+pnpm tauri icon assets/logo.png
 ```
 
 ## Releasing

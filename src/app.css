@@ -58,9 +58,7 @@
   color-scheme: dark;
 }
 
-/* Catppuccin flavours. Generated from the official palette by
- * scripts/generate-catppuccin-css.py — do not edit between the markers. */
-/* catppuccin:begin */
+/* Catppuccin flavours, from the official palette at catppuccin.com/palette. */
 :root[data-theme="catppuccin-latte"] {
   /* Catppuccin Latte */
   --bg: #e6e9ef; /* mantle */
@@ -116,7 +114,6 @@
   --warn: #f9e2af; /* yellow */
   color-scheme: dark;
 }
-/* catppuccin:end */
 
 /* Settings categories --------------------------------------------------- */
 
