@@ -1,0 +1,120 @@
+name: Release
+
+# Tagging a commit on main builds and publishes the app:
+#
+#   git tag -a v0.2.0 -m "v0.2.0" && git push origin v0.2.0
+#
+# Unlike the GitLab pipeline, no self-hosted runner is needed: GitHub hosts
+# macOS runners. That matters because a Tauri app is a Rust binary linked
+# against WebKit and AppKit, so it has to be compiled on macOS — it cannot be
+# cross-built from Linux the way an Electron app can.
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+# Needed to create the release and upload assets.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # Apple Silicon; the build below is universal so Intel machines are covered.
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # build.rs derives the version from `git describe --tags`. The default
+          # shallow checkout leaves the tag unreachable, which would silently
+          # bake a bare commit hash into the release instead of "0.2.0".
+          fetch-depth: 0
+
+      - name: Refuse tags that are not on main
+        # Otherwise a tag cut from a feature branch would publish code that was
+        # never merged.
+        run: |
+          git fetch origin main --quiet
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag ${GITHUB_REF_NAME} is not an ancestor of main; refusing to release."
+            exit 1
+          fi
+
+      - run: corepack enable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # Rust ships preinstalled on GitHub runners; only the extra target for
+      # the universal build has to be added.
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Sync the bundle version to the tag
+        # The app reads its own version from git via build.rs, but the bundle's
+        # Info.plist takes it from tauri.conf.json — leave that alone and Finder
+        # would report a stale version on every release after the first.
+        #
+        # fs rather than require(): under `node -e` a relative require resolves
+        # against node's own directory, not the working directory, and fails.
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          node -e "const fs=require('fs'); const f='src-tauri/tauri.conf.json';
+            const j=JSON.parse(fs.readFileSync(f,'utf8')); j.version=process.argv[1];
+            fs.writeFileSync(f, JSON.stringify(j,null,2)+'\n')" "$VERSION"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Build universal app
+        # Actions sets CI=true, which is load-bearing here: tauri's
+        # bundle_dmg.sh runs an AppleScript to prettify the DMG in Finder, and
+        # that fails outside a GUI session unless CI makes it pass
+        # --skip-jenkins. Verified: without it the build dies at
+        # "Running bundle_dmg.sh".
+        #
+        # To sign and notarize, uncomment the env block and add the secrets.
+        # Left out by default because an unset secret arrives as an empty
+        # string, which tauri treats as "sign with this identity" and fails.
+        # env:
+        #   APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+        #   APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        #   APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        #   APPLE_ID: ${{ secrets.APPLE_ID }}
+        #   APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+        #   APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm tauri build --target universal-apple-darwin
+
+      - name: Stage the disk image
+        # Named deterministically from the version set above rather than
+        # globbed, so a stale .dmg in the cached target dir cannot be picked up.
+        run: |
+          mkdir -p release
+          cp "src-tauri/target/universal-apple-darwin/release/bundle/dmg/SyncPoint_${VERSION}_universal.dmg" \
+             "release/SyncPoint-${GITHUB_REF_NAME}-universal.dmg"
+          ls -lh release/
+
+      - name: Publish the release
+        # gh is preinstalled on the runners, so this needs no third-party
+        # action and no token beyond the one Actions already provides.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'NOTES'
+          Universal macOS build (Apple Silicon and Intel).
+
+          This build is **not signed or notarized**, so Gatekeeper will block it
+          on first launch. Right-click the app and choose Open, or clear the
+          quarantine flag:
+
+          ```
+          xattr -cr /Applications/SyncPoint.app
+          ```
+          NOTES
+          gh release create "$GITHUB_REF_NAME" release/*.dmg \
+            --title "SyncPoint $GITHUB_REF_NAME" \
+            --notes-file notes.md

@@ -1,0 +1,172 @@
+# Release pipeline: tagging a commit on main builds and publishes the app.
+#
+#   git tag -a v0.2.0 -m "v0.2.0" && git push origin v0.2.0
+#
+# Note on macOS builds: unlike Electron — which ships a prebuilt platform
+# binary and only repackages it, so it can cross-build from Linux — a Tauri app
+# *is* a Rust binary linked against WebKit and AppKit. It has to be compiled on
+# macOS against the macOS SDK, which Apple licenses to Apple hardware only.
+# There is no Docker image that can produce it. The `package:macos` job
+# therefore needs a macOS runner; see the `tags:` on that job.
+
+stages:
+  - test
+  - package
+  - release
+
+variables:
+  # build.rs derives the version from `git describe --tags`. GitLab's default
+  # shallow clone can leave the tag unreachable, which would silently bake in a
+  # bare commit hash instead of "0.2.0". A full clone is the reliable fix.
+  GIT_DEPTH: 0
+
+default:
+  interruptible: true
+
+# ── Test: runs on the Docker runner, so it works without a macOS runner ───────
+#
+# The Rust in this project is portable enough to test on Linux: only the menu
+# layout is behind cfg(target_os = "macos"), and no test touches it.
+
+test:
+  stage: test
+  tags:
+    - docker-runner
+  image: rust:1-bookworm
+  variables:
+    CARGO_HOME: $CI_PROJECT_DIR/.cargo
+  before_script:
+    # Tauri's Linux build dependencies — needed to compile the crate at all,
+    # even though the artifact is thrown away here.
+    - apt-get update -qq
+    - >-
+      apt-get install -y -qq --no-install-recommends
+      libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev
+      librsvg2-dev libxdo-dev libssl-dev pkg-config build-essential curl >/dev/null
+    - corepack enable && corepack prepare pnpm@latest --activate
+    - pnpm install --frozen-lockfile
+  script:
+    - cargo test --lib --manifest-path src-tauri/Cargo.toml
+    - pnpm check
+  cache:
+    key:
+      files:
+        - src-tauri/Cargo.lock
+        - pnpm-lock.yaml
+    paths:
+      - .cargo/registry/
+      - src-tauri/target/
+      - node_modules/
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+# ── Package: macOS runner required ───────────────────────────────────────────
+
+package:macos:
+  stage: package
+  # Change to match your runner. For GitLab SaaS macOS runners instead use:
+  #   tags: [saas-macos-medium-m1]
+  #   image: macos-15-xcode-16
+  tags:
+    - macos
+  variables:
+    CARGO_HOME: $CI_PROJECT_DIR/.cargo
+    # GitLab sets this already, but it is load-bearing and worth stating:
+    # tauri's bundle_dmg.sh runs an AppleScript to prettify the DMG in Finder,
+    # which fails outside a GUI session. CI makes it pass --skip-jenkins.
+    # Verified: without it the build fails at "Running bundle_dmg.sh".
+    CI: "true"
+  before_script:
+    # The tag must be reachable from main — a tag cut off a feature branch
+    # would otherwise publish code that was never merged.
+    - git fetch origin main --quiet
+    - |
+      if ! git merge-base --is-ancestor "$CI_COMMIT_SHA" origin/main; then
+        echo "Tag $CI_COMMIT_TAG is not an ancestor of main; refusing to release."
+        exit 1
+      fi
+    - corepack enable && corepack prepare pnpm@latest --activate
+    - rustup target add aarch64-apple-darwin x86_64-apple-darwin
+    - pnpm install --frozen-lockfile
+  script:
+    - export VERSION="${CI_COMMIT_TAG#v}"
+    # The app reads its own version from git via build.rs, but the bundle's
+    # Info.plist takes it from tauri.conf.json — leave that alone and Finder
+    # would report a stale version on every release after the first.
+    # fs rather than require(): under `node -e` a relative require resolves
+    # against node's own directory, not the working directory, and fails.
+    - >-
+      node -e "const fs=require('fs'); const f='src-tauri/tauri.conf.json';
+      const j=JSON.parse(fs.readFileSync(f,'utf8')); j.version=process.argv[1];
+      fs.writeFileSync(f, JSON.stringify(j,null,2)+'\n')" "$VERSION"
+    # Universal so the build runs on both Apple Silicon and Intel machines.
+    - pnpm tauri build --target universal-apple-darwin
+    # Named deterministically from the version set above rather than globbed,
+    # so a stale .dmg left in the cached target dir cannot be picked up.
+    - BUNDLE=src-tauri/target/universal-apple-darwin/release/bundle
+    - mkdir -p release
+    - cp "$BUNDLE/dmg/SyncPoint_${VERSION}_universal.dmg" "release/SyncPoint-${CI_COMMIT_TAG}-universal.dmg"
+    - ls -lh release/
+    # Job artifacts expire; the generic package registry does not, so release
+    # assets keep working after the artifact is gone.
+    - export ASSET="SyncPoint-${CI_COMMIT_TAG}-universal.dmg"
+    - export PACKAGE_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/syncpoint/${CI_COMMIT_TAG}"
+    - >-
+      curl --fail --silent --show-error --header "JOB-TOKEN: ${CI_JOB_TOKEN}"
+      --upload-file "release/${ASSET}" "${PACKAGE_URL}/${ASSET}"
+    # Handed to the release job, which needs the final filename and URL.
+    - echo "ASSET_NAME=${ASSET}" >> release.env
+    - echo "ASSET_URL=${PACKAGE_URL}/${ASSET}" >> release.env
+  artifacts:
+    name: "$CI_JOB_NAME-$CI_COMMIT_REF_SLUG"
+    paths:
+      - release/*.dmg
+    reports:
+      dotenv: release.env
+    expire_in: 30 days
+  cache:
+    key:
+      files:
+        - src-tauri/Cargo.lock
+        - pnpm-lock.yaml
+    paths:
+      - .cargo/registry/
+      - src-tauri/target/
+      - node_modules/
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+
+# ── Release: creates the GitLab release entry ────────────────────────────────
+
+release:
+  stage: release
+  tags:
+    - docker-runner
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  needs:
+    - job: package:macos
+      artifacts: true
+  script:
+    - echo "Publishing SyncPoint $CI_COMMIT_TAG"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    name: "SyncPoint $CI_COMMIT_TAG"
+    description: |
+      Universal macOS build (Apple Silicon and Intel).
+
+      This build is **not signed or notarized**, so Gatekeeper will block it on
+      first launch. Right-click the app and choose Open, or clear the quarantine
+      flag:
+
+      ```
+      xattr -cr /Applications/SyncPoint.app
+      ```
+    assets:
+      links:
+        - name: $ASSET_NAME
+          url: $ASSET_URL
+          link_type: package
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
