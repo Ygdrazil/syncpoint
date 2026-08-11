@@ -47,6 +47,14 @@ Checked in order, first real rsync 3.x wins:
 2. `/usr/local/bin/rsync`
 3. `/usr/bin/rsync`
 
+Remote paths are shell-quoted by this app, because openrsync relies on the
+remote shell to strip the quotes. rsync 3.2.4+ escapes remote args itself, so
+the two together produced a literal `'/path'` directory under the remote home
+and an exit 11. Those builds are therefore passed `--old-args`, which hands
+escaping back to us and keeps one quoting behaviour across every rsync. The
+capability is detected by looking for `--old-args` in `--help` rather than
+comparing versions, since the flag's presence is the thing that matters.
+
 macOS ships Apple's **openrsync**, which speaks protocol 29 and lacks most
 rsync 3.x flags. The header shows which one is in use. Only flags present in
 rsync 2.6.9 are used, so the same command works on both. `brew install rsync`

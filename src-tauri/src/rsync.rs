@@ -32,11 +32,17 @@ pub struct RsyncInfo {
     /// build do without. Derived once here so the rule lives in one place and
     /// the UI can read it directly.
     pub supports_progress: bool,
+    /// rsync 3.2.4+ escapes shell-active characters in remote args itself. This
+    /// app quotes the remote path already, so without opting out the quotes
+    /// arrive literally and the destination becomes a directory named `'...'`
+    /// under the remote home. Detected from `--help` rather than a version
+    /// comparison, since the flag's presence is the thing that matters.
+    pub protects_args: bool,
 }
 
 /// Classify a binary from its `--version` banner. Split out from [`probe`] so
 /// the parsing is testable without a binary on disk.
-fn describe(path: &str, version_line: &str) -> RsyncInfo {
+fn describe(path: &str, version_line: &str, help: &str) -> RsyncInfo {
     let is_openrsync = version_line.to_lowercase().contains("openrsync");
 
     // rsync 3.x: "rsync  version 3.4.1  protocol version 32"
@@ -58,6 +64,7 @@ fn describe(path: &str, version_line: &str) -> RsyncInfo {
         is_openrsync,
         major,
         supports_progress: !is_openrsync && major >= 3,
+        protects_args: help.contains("--old-args"),
     }
 }
 
@@ -67,7 +74,15 @@ fn probe(path: &str) -> Option<RsyncInfo> {
     }
     let out = std::process::Command::new(path).arg("--version").output().ok()?;
     let text = String::from_utf8_lossy(&out.stdout);
-    Some(describe(path, text.lines().next()?.trim()))
+
+    // Capability probe: `--old-args` exists only on builds that protect args.
+    let help = std::process::Command::new(path)
+        .arg("--help")
+        .output()
+        .map(|o| format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)))
+        .unwrap_or_default();
+
+    Some(describe(path, text.lines().next()?.trim(), &help))
 }
 
 pub fn detect() -> Option<RsyncInfo> {
@@ -87,6 +102,11 @@ pub fn build_args(profile: &Profile, connection: &Connection, rsync: &RsyncInfo)
         "-v".to_string(), // per-file lines, which become the log output
         "-h".to_string(),
     ];
+    if rsync.protects_args {
+        // Keep one quoting behaviour across every rsync: this app escapes the
+        // remote path itself, which rsync 3.2.4+ would otherwise double up on.
+        args.push("--old-args".to_string());
+    }
     if rsync.supports_progress {
         args.push("--info=progress2".to_string());
         // Progress arrives as carriage-return updates, which rsync buffers by
@@ -419,15 +439,20 @@ fn explain(code: i32, stderr: &[String]) -> String {
 mod tests {
     use super::*;
 
+    /// Trimmed from the real `--help` of rsync 3.4.4.
+    const MODERN_HELP: &str = "--old-args               disable the modern arg-protection idiom\n\
+                               --secluded-args, -s      use the protocol to safely send the args";
+
     fn modern() -> RsyncInfo {
         describe(
             "/opt/homebrew/bin/rsync",
             "rsync  version 3.4.1  protocol version 32",
+            MODERN_HELP,
         )
     }
 
     fn openrsync() -> RsyncInfo {
-        describe("/usr/bin/rsync", "openrsync: protocol version 29")
+        describe("/usr/bin/rsync", "openrsync: protocol version 29", "")
     }
 
     fn connection() -> Connection {
@@ -563,13 +588,13 @@ mod tests {
         assert!(!old.supports_progress);
 
         // rsync 2.6.9 is real rsync, but still predates --info.
-        let ancient = describe("/usr/bin/rsync", "rsync  version 2.6.9  protocol version 29");
+        let ancient = describe("/usr/bin/rsync", "rsync  version 2.6.9  protocol version 29", "");
         assert!(!ancient.is_openrsync);
         assert_eq!(ancient.major, 2);
         assert!(!ancient.supports_progress);
 
         // An unreadable banner must degrade to the safe baseline.
-        let unknown = describe("/usr/bin/rsync", "some unexpected banner");
+        let unknown = describe("/usr/bin/rsync", "some unexpected banner", "");
         assert_eq!(unknown.major, 0);
         assert!(!unknown.supports_progress);
     }
@@ -627,6 +652,28 @@ mod tests {
         ] {
             assert!(parse_progress(line).is_none(), "wrongly parsed: {line:?}");
         }
+    }
+
+    #[test]
+    fn quoting_is_opted_out_of_only_where_rsync_would_double_it() {
+        // rsync 3.2.4+ escapes remote args itself; combined with this app's own
+        // quoting the destination became a literal "'/path'" under the home
+        // directory. --old-args hands escaping back to us.
+        let modern_args = build_args(&profile(), &connection(), &modern());
+        assert!(modern_args.contains(&"--old-args".to_string()));
+
+        // openrsync has no such flag and relies on the remote shell stripping
+        // the quotes, so it must not be passed.
+        let old_args = build_args(&profile(), &connection(), &openrsync());
+        assert!(!old_args.contains(&"--old-args".to_string()));
+    }
+
+    #[test]
+    fn arg_protection_is_detected_from_help_not_the_version() {
+        assert!(modern().protects_args);
+        assert!(!openrsync().protects_args);
+        // A 3.x build predating the change advertises no such flag.
+        assert!(!describe("/x", "rsync  version 3.1.3  protocol version 31", "").protects_args);
     }
 
     #[test]
