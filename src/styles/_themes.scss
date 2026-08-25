@@ -1,0 +1,135 @@
+@use "sass:map";
+
+/// Every theme lives here and nowhere else.
+///
+/// Adding one means adding a single entry to `$themes`: the `:root[data-theme]`
+/// selector, the `color-scheme` hint and the system-preference fallback are all
+/// emitted from this map. Keys must match the `Theme` variants serialised by
+/// `settings.rs` — a variant with no entry renders as the default palette and
+/// looks broken for no visible reason, which a test in that module guards
+/// against.
+///
+/// `scheme` tells the browser which way to style the controls it draws itself:
+/// scrollbars, form widgets, the caret. It is also what the frontend maps to
+/// the native title bar, and is why it cannot be inferred from the name —
+/// Catppuccin Latte is light while its three siblings are dark.
+
+$themes: (
+  "light": (
+    scheme: light,
+    bg: #f7f7f8,
+    panel: #ffffff,
+    border: #e0e0e4,
+    text: #17171a,
+    muted: #6b6b76,
+    accent: #3b6cd8,
+    danger: #c8362f,
+    ok: #1f9254,
+    warn: #b7791f,
+  ),
+  "dark": (
+    scheme: dark,
+    bg: #161619,
+    panel: #1e1e23,
+    border: #32323a,
+    text: #ececf0,
+    muted: #9a9aa6,
+    accent: #6b93ef,
+    danger: #ef6b62,
+    ok: #4ac287,
+    warn: #e0a740,
+  ),
+
+  // Catppuccin, from the official palette at catppuccin.com/palette.
+  // `base` is the lightest of base/mantle/crust in every flavour, so using it
+  // for the panel keeps panels sitting above the background as they do in the
+  // built-in themes.
+  "catppuccin-latte": (
+    scheme: light,
+    bg: #e6e9ef,
+    panel: #eff1f5,
+    border: #ccd0da,
+    text: #4c4f69,
+    muted: #6c6f85,
+    accent: #1e66f5,
+    danger: #d20f39,
+    ok: #40a02b,
+    warn: #df8e1d,
+  ),
+  "catppuccin-frappe": (
+    scheme: dark,
+    bg: #292c3c,
+    panel: #303446,
+    border: #414559,
+    text: #c6d0f5,
+    muted: #a5adce,
+    accent: #8caaee,
+    danger: #e78284,
+    ok: #a6d189,
+    warn: #e5c890,
+  ),
+  "catppuccin-macchiato": (
+    scheme: dark,
+    bg: #1e2030,
+    panel: #24273a,
+    border: #363a4f,
+    text: #cad3f5,
+    muted: #a5adcb,
+    accent: #8aadf4,
+    danger: #ed8796,
+    ok: #a6da95,
+    warn: #eed49f,
+  ),
+  "catppuccin-mocha": (
+    scheme: dark,
+    bg: #181825,
+    panel: #1e1e2e,
+    border: #313244,
+    text: #cdd6f4,
+    muted: #a6adc8,
+    accent: #89b4fa,
+    danger: #f38ba8,
+    ok: #a6e3a1,
+    warn: #f9e2af,
+  ),
+);
+
+/// Used when no theme is chosen, picked by the OS preference. Referencing the
+/// maps rather than repeating them means the light and dark palettes are
+/// written once instead of once per selector.
+$system-light: "light";
+$system-dark: "dark";
+
+@mixin tokens($theme) {
+  --bg: #{map.get($theme, bg)};
+  --panel: #{map.get($theme, panel)};
+  --border: #{map.get($theme, border)};
+  --text: #{map.get($theme, text)};
+  --muted: #{map.get($theme, muted)};
+  --accent: #{map.get($theme, accent)};
+  --danger: #{map.get($theme, danger)};
+  --ok: #{map.get($theme, ok)};
+  --warn: #{map.get($theme, warn)};
+  color-scheme: #{map.get($theme, scheme)};
+}
+
+@mixin emit() {
+  // The starting point, so the app is styled before any attribute is set.
+  :root {
+    @include tokens(map.get($themes, $system-light));
+  }
+
+  // "System" is the *absence* of data-theme rather than a value of it, so any
+  // explicit choice beats the OS preference without needing to be listed here.
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme]) {
+      @include tokens(map.get($themes, $system-dark));
+    }
+  }
+
+  @each $name, $theme in $themes {
+    :root[data-theme="#{$name}"] {
+      @include tokens($theme);
+    }
+  }
+}

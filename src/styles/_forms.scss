@@ -1,0 +1,142 @@
+// Inputs, labels and buttons.
+
+/* Forms ---------------------------------------------------------------- */
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  max-width: 620px;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+label.debounce {
+  max-width: 200px;
+}
+
+label.check {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.5rem;
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+label.check span {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+label.check input {
+  margin-top: 0.15rem;
+  width: auto;
+}
+
+textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  resize: vertical;
+}
+
+small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
+// Button rows. Unlike a row of fields, where flex-end lines the inputs up
+// under labels of differing heights, these hold controls of one height plus
+// the odd bit of status text, which belongs on their centre line.
+.row.end {
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.port {
+  width: 80px;
+  flex-shrink: 0;
+}
+
+button {
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 0.42rem 0.8rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+button.danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+button.cog {
+  display: grid;
+  place-items: center;
+  padding: 0.3rem;
+  color: var(--muted);
+  line-height: 0;
+}
+
+button.cog:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+button.link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  text-decoration: underline;
+  font-size: inherit;
+}
+
+.setting input.narrow {
+  max-width: 160px;
+}
+
+.setting .narrow-wide {
+  max-width: 260px;
+}
+
+button.danger-solid {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}

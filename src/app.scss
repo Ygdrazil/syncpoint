@@ -1,0 +1,8 @@
+@use "styles/themes";
+@use "styles/base";
+@use "styles/layout";
+@use "styles/forms";
+@use "styles/components";
+
+// Emits :root, the system-preference fallback and one selector per theme.
+@include themes.emit;

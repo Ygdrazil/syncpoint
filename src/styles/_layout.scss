@@ -1,0 +1,329 @@
+// Window chrome: the shell, header, sidebar and its list.
+
+/* Settings categories --------------------------------------------------- */
+
+.category {
+  display: block;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font-size: 0.85rem;
+}
+
+.category:hover {
+  background: var(--bg);
+}
+
+.category.active {
+  border-color: var(--accent);
+  background: var(--bg);
+}
+
+/* Profile and folder list ----------------------------------------------- */
+
+.items {
+  list-style: none;
+  margin: 0.4rem 0 0.4rem;
+  // A strip below the last row is the drop target for the top level. Without
+  // it there is no way to drag a profile back out of a folder once every
+  // profile lives in one.
+  padding: 0 0 1.6rem;
+  // Dragging is pointer-driven, so a drag across the list must not start
+  // selecting the row labels it passes over.
+  user-select: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+.item:hover {
+  background: var(--bg);
+}
+
+.item.active {
+  border-color: var(--accent);
+  background: var(--bg);
+}
+
+.item-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.item-meta strong {
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.item-meta small {
+  font-size: 0.72rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// A folder is a container, not an entry, so it reads as a group header rather
+// than as a second kind of card: one tight line instead of a profile's two.
+.item.folder {
+  padding: 0.3rem 0.5rem;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.item.folder strong {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// Just the number. Which folder it belongs to is obvious from where it sits,
+// and "1 profile(s)" was never going to be right for both.
+.folder-count {
+  margin-left: auto;
+  padding-left: 0.4rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.folder-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--text);
+}
+
+// The webview rings a button that was merely clicked, which left an expanded
+// folder looking permanently selected. Keyboard focus still shows.
+.item:focus {
+  outline: none;
+}
+
+.item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.empty {
+  color: var(--muted);
+  font-size: 0.8rem;
+  padding: 0.5rem;
+}
+
+/* Drag and drop --------------------------------------------------------- */
+
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  // The insertion line is drawn on this element's own edge, so it must not
+  // shift the row or the list would jitter as the pointer crosses rows.
+  position: relative;
+}
+
+.list-row.dragging .item {
+  opacity: 0.4;
+}
+
+/// Landing inside a folder: the whole row lights up, since the drop appends
+/// rather than going to a particular position.
+.list-row.drop-into > .item {
+  border-color: var(--accent);
+  background: var(--bg);
+}
+
+.list-row.drop-above::before,
+.list-row.drop-below::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.list-row.drop-above::before {
+  top: -2px;
+}
+.list-row.drop-below::after {
+  bottom: -2px;
+}
+
+/// Dropping below every row means the top level.
+.items.drop-root {
+  box-shadow: inset 0 0 0 1px var(--accent);
+  border-radius: 8px;
+}
+
+/// Follows the pointer; never a drop target itself.
+.drag-ghost {
+  position: fixed;
+  z-index: 100;
+  pointer-events: none;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 0.78rem;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.3);
+}
+
+/* Window shell ---------------------------------------------------------- */
+//
+// Neither window has a title bar, so both columns start at the window edge and
+// the traffic lights sit inside the sidebar's own head.
+
+.app {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  // One row, exactly the window. The implicit row would be auto-sized, so a
+  // long output log in the detail pane grew it past the window and stretched
+  // the sidebar with it, carrying its footer off the bottom of the screen.
+  grid-template-rows: minmax(0, 1fr);
+  height: 100vh;
+  // The strip both columns reserve at the top, so the drag region spans the
+  // whole window width rather than just the sidebar. Deep enough to grab
+  // comfortably below the traffic lights; the sidebar head is taller than this
+  // on its own and stays draggable for its full height.
+  --head-height: 3.5rem;
+}
+
+aside {
+  display: flex;
+  flex-direction: column;
+  // Lets the scrolling middle actually scroll rather than pushing the column
+  // taller than its grid row.
+  min-height: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.side-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+  // The top strip is where the traffic lights land, so nothing may sit there.
+  padding: 2.5rem 0.75rem 0.6rem;
+  min-height: var(--head-height);
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+// The content column's half of the drag strip. Empty and structural rather
+// than an overlay: content scrolls below it, never under it, so it can never
+// swallow a click meant for a button.
+.main-head {
+  min-height: var(--head-height);
+  flex-shrink: 0;
+}
+
+.side-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  // Height of the cog button, so a head without one still clears the traffic
+  // lights by the same margin and both windows line up.
+  min-height: 1.75rem;
+}
+
+// Pushes whatever follows it to the far end of a flex row.
+.spacer {
+  flex: 1;
+}
+
+.side-title h1 {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.side-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 0.75rem;
+}
+
+.side-foot {
+  display: flex;
+  // Fixed ends, so the list in the middle is what gives way.
+  flex-shrink: 0;
+  gap: 0.4rem;
+  padding: 0.6rem 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.side-foot button {
+  flex: 1;
+  font-size: 0.78rem;
+}
+
+main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.pane {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  // Hint bubbles are absolutely positioned with width: max-content and
+  // visibility: hidden by default; even invisible, they extend the
+  // scrollable region to the right and produce a phantom horizontal
+  // scrollbar. Clipping the x axis prevents that without affecting
+  // vertical scroll.
+  overflow-x: hidden;
+  // The head above already provides the top offset.
+  padding: 0 1.25rem 1.25rem;
+}
+
+// Compact mode: the window is narrowed to the sidebar, so the detail column is
+// not merely hidden, it has nowhere left to be.
+.app.compact {
+  grid-template-columns: 1fr;
+}
+
+.app.compact > main {
+  display: none;
+}
+
+// Nothing sits to the right of it any more.
+.app.compact > aside {
+  border-right: none;
+}
+
+/* Odds and ends --------------------------------------------------------- */
+
+button.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}

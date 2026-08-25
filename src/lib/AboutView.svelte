@@ -1,0 +1,327 @@
+<script lang="ts">
+  import { onMount, onDestroy } from "svelte";
+  import { check } from "@tauri-apps/plugin-updater";
+  import { relaunch } from "@tauri-apps/plugin-process";
+  import * as api from "$lib/api";
+  import type { AppInfo } from "$lib/types";
+
+  let info = $state<AppInfo | null>(null);
+  let copied = $state(false);
+
+  onMount(() => {
+    api.getAppInfo().then((value) => {
+      info = value;
+      // If opened from an "Update" toast, start downloading immediately.
+      api.takeAutoUpdate().then((auto) => {
+        if (auto && !info?.isDev) downloadAndInstall();
+      });
+    });
+  });
+
+  function rsyncLabel(value: AppInfo): string {
+    if (!value.rsync) return "not found";
+    return value.rsync.isOpenrsync
+      ? `openrsync (limited) — ${value.rsync.path}`
+      : `rsync ${value.rsync.major}.x — ${value.rsync.path}`;
+  }
+
+  // Everything worth pasting into a bug report, in one click.
+  async function copyDetails() {
+    if (!info) return;
+    const text = [
+      `${info.name} ${info.version}`,
+      `rsync: ${rsyncLabel(info)}`,
+      `config: ${info.configPath}`
+    ].join("\n");
+    await navigator.clipboard.writeText(text);
+    copied = true;
+    setTimeout(() => (copied = false), 1500);
+  }
+
+  // --- Update checker ------------------------------------------------------
+
+  type UpdateState =
+    | "idle"
+    | "checking"
+    | "upToDate"
+    | "available"
+    | "downloading"
+    | "installing"
+    | "error";
+
+  let updateState = $state<UpdateState>("idle");
+  let pendingVersion = $state("");
+  let progress = $state(0); // 0..100
+  let updateError = $state("");
+  let fadeTimer: ReturnType<typeof setTimeout> | undefined;
+
+  onDestroy(() => clearFade());
+
+  function clearFade() {
+    if (fadeTimer) {
+      clearTimeout(fadeTimer);
+      fadeTimer = undefined;
+    }
+  }
+
+  function resetToIdle(after: number) {
+    clearFade();
+    fadeTimer = setTimeout(() => {
+      updateState = "idle";
+      updateError = "";
+      pendingVersion = "";
+      progress = 0;
+    }, after);
+  }
+
+  async function checkForUpdates() {
+    if (updateState === "checking") return;
+    if (info?.isDev) {
+      updateError = "Updates are not available in development builds.";
+      updateState = "error";
+      resetToIdle(4000);
+      return;
+    }
+    clearFade();
+    updateState = "checking";
+    updateError = "";
+    pendingVersion = "";
+    progress = 0;
+    try {
+      const update = await check();
+      if (!update) {
+        updateState = "upToDate";
+        resetToIdle(2500);
+        return;
+      }
+      updateState = "available";
+      pendingVersion = update.version;
+      // The Update object is a Resource — close it so it does not leak
+      // while the user decides whether to download.
+      try {
+        await update.close();
+      } catch {
+        // Resource already freed — non-fatal.
+      }
+    } catch (err) {
+      updateError = err instanceof Error ? err.message : String(err);
+      updateState = "error";
+      resetToIdle(4000);
+    }
+  }
+
+  async function downloadAndInstall() {
+    if (
+      updateState === "downloading" ||
+      updateState === "installing"
+    )
+      return;
+    updateState = "downloading";
+    progress = 0;
+    try {
+      const update = await check();
+      if (!update) {
+        updateState = "upToDate";
+        resetToIdle(2500);
+        return;
+      }
+      let downloaded = 0;
+      let total = 0;
+      await update.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          total = event.data.contentLength ?? 0;
+        } else if (event.event === "Progress") {
+          downloaded += event.data.chunkLength;
+          if (total > 0) {
+            progress = Math.min(100, Math.round((downloaded / total) * 100));
+          }
+        } else if (event.event === "Finished") {
+          progress = 100;
+        }
+      });
+      updateState = "installing";
+      await relaunch();
+    } catch (err) {
+      updateError = err instanceof Error ? err.message : String(err);
+      updateState = "error";
+      resetToIdle(4000);
+    }
+  }
+</script>
+
+<div class="about">
+  {#if info}
+    <h1>{info.name}</h1>
+    <p class="version">
+      {info.version}
+      {#if info.isDev}
+        <span class="badge warn">development build</span>
+      {/if}
+    </p>
+
+    <dl class="details">
+      <dt>rsync</dt>
+      <dd>{rsyncLabel(info)}</dd>
+      <dt>Config</dt>
+      <dd class="wrap">{info.configPath}</dd>
+    </dl>
+
+    <button onclick={copyDetails}>{copied ? "Copied" : "Copy details"}</button>
+
+    <div class="updates">
+      {#if updateState === "checking"}
+        <button disabled>Checking…</button>
+      {:else if updateState === "upToDate"}
+        <p class="update-status ok">SyncPoint is up to date.</p>
+      {:else if updateState === "available"}
+        <div class="update-available">
+          <p class="update-status">
+            Update available: v{pendingVersion}
+          </p>
+          <button class="primary" onclick={downloadAndInstall}>
+            Download &amp; Restart
+          </button>
+        </div>
+      {:else if updateState === "downloading"}
+        <div class="download">
+          <div class="bar">
+            <div class="bar-fill" style="width: {progress}%"></div>
+          </div>
+          <p class="update-status muted">Downloading… {progress}%</p>
+        </div>
+      {:else if updateState === "installing"}
+        <p class="update-status muted">Installing…</p>
+      {:else if updateState === "error"}
+        <p class="update-status error">{updateError}</p>
+      {:else}
+        <button onclick={checkForUpdates}>Check for updates</button>
+      {/if}
+    </div>
+
+    <p class="fine">
+      Mirrors local folders to remote hosts over SSH, driven by a filesystem
+      watcher.
+    </p>
+  {:else}
+    <p class="fine">Loading…</p>
+  {/if}
+</div>
+
+<style>
+  .about {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 0.6rem;
+    padding: 2rem 1.5rem;
+    box-sizing: border-box;
+    min-height: 100vh;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 1.35rem;
+  }
+
+  .version {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.9rem;
+    color: var(--muted);
+  }
+
+  .details {
+    width: 100%;
+    margin: 0.8rem 0 0;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.35rem 0.8rem;
+    text-align: left;
+    font-size: 0.78rem;
+  }
+  .details dt {
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.68rem;
+    padding-top: 0.1rem;
+  }
+  .details dd {
+    margin: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .details dd.wrap {
+    word-break: break-all;
+  }
+
+  .fine {
+    margin: 0.4rem 0 0;
+    font-size: 0.75rem;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  /* Update checker -------------------------------------------------------- */
+
+  .updates {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 1.5rem;
+  }
+
+  .update-available {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .update-status {
+    margin: 0;
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+
+  .update-status.ok {
+    color: var(--ok);
+  }
+
+  .update-status.error {
+    color: var(--danger);
+    word-break: break-word;
+  }
+
+  .update-status.muted {
+    color: var(--muted);
+  }
+
+  .download {
+    width: 100%;
+    max-width: 240px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .bar {
+    width: 100%;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--border);
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 999px;
+    transition: width 0.2s ease-out;
+  }
+</style>

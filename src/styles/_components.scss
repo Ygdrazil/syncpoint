@@ -1,0 +1,516 @@
+// Everything else: badges, dialogs, the log, progress, menus.
+
+.setting {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.9rem 0;
+  border-bottom: 1px solid var(--border);
+  max-width: 520px;
+}
+
+.setting:last-of-type {
+  border-bottom: none;
+}
+
+.setting .title {
+  font-size: 0.88rem;
+  font-weight: 550;
+}
+
+.conn-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.conn-row:last-of-type {
+  border-bottom: none;
+}
+
+.conn-row .grow {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.badge {
+  font-size: 0.72rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.badge.warn {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.badge.error {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.notice {
+  font-size: 0.76rem;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--muted);
+}
+
+.dot.idle {
+  background: var(--ok);
+}
+
+.dot.pending {
+  background: var(--warn);
+}
+
+.dot.syncing {
+  background: var(--accent);
+}
+
+.dot.error {
+  background: var(--danger);
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.45rem 0.55rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* Detail --------------------------------------------------------------- */
+
+.detail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.titles h2 {
+  margin-bottom: 0.35rem;
+}
+
+.path {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.76rem;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.chip {
+  font-size: 0.72rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.chip.idle {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.chip.pending {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.chip.syncing {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.chip.error {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  margin: 1rem 0 0;
+  padding: 0;
+}
+
+.facts dt {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.facts dd {
+  margin: 0.15rem 0 0;
+  font-size: 0.82rem;
+}
+
+.muted-line {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.alert {
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.8rem;
+  margin: 0.9rem 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.alert.ok {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.log {
+  margin: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.7rem;
+  height: 300px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+}
+
+.log span {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.log .stderr {
+  color: var(--danger);
+}
+
+.log .meta {
+  color: var(--accent);
+}
+
+.log .muted {
+  color: var(--muted);
+}
+
+.placeholder {
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  height: 100%;
+  text-align: center;
+}
+
+.placeholder .stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+/* Transfer progress ------------------------------------------------------ */
+
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 1rem;
+  max-width: 520px;
+}
+
+.progress .track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.progress .fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.2s ease-out;
+}
+
+.progress-note {
+  margin-top: 1rem;
+}
+
+/* Right-click menu ------------------------------------------------------- */
+
+.context-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 160px;
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.25);
+}
+
+.context-menu .sep {
+  height: 1px;
+  margin: 0.25rem 0.3rem;
+  background: var(--border);
+}
+
+.context-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  border-radius: 5px;
+  padding: 0.35rem 0.55rem;
+}
+
+.context-menu button:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+}
+
+.context-menu button.danger:hover:not(:disabled) {
+  background: var(--danger);
+  color: #fff;
+}
+
+/* Hint tooltips --------------------------------------------------------- */
+
+.hint {
+  position: relative;
+  display: inline-flex;
+  vertical-align: middle;
+  margin-left: 0.3rem;
+}
+
+.hint-badge {
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 600;
+  line-height: 1;
+  cursor: help;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.hint-badge:hover,
+.hint-badge:focus-visible {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.hint-bubble {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: -4px;
+  z-index: 20;
+  width: max-content;
+  // Bounded so the bubble cannot reach past the settings column, which
+  // scrolls and would clip it.
+  max-width: 19rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 0.76rem;
+  font-weight: 400;
+  line-height: 1.45;
+  text-align: left;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.28);
+  // Hidden by opacity rather than display, so it keeps its place in the
+  // accessibility tree for aria-describedby.
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 90ms ease;
+}
+
+.hint-badge:hover + .hint-bubble,
+.hint-badge:focus-visible + .hint-bubble,
+// Stays open while the pointer is inside it, so the text can be selected.
+.hint-bubble:hover {
+  opacity: 1;
+  visibility: visible;
+}
+
+.hint-bubble code {
+  font-size: 0.72rem;
+}
+
+/* Toasts ---------------------------------------------------------------- */
+//
+// For things that just happened. Above everything, bottom right, and out of
+// the way of the pointer except where a toast actually is.
+
+.toasts {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  // Each toast is only as wide as it needs to be, rather than stretching the
+  // stack's full width for three words.
+  align-items: flex-end;
+  gap: 0.55rem;
+  max-width: min(26rem, calc(100vw - 2rem));
+  // Only the toasts take the pointer; the gaps between them must not block
+  // what is underneath.
+  pointer-events: none;
+}
+
+.toast {
+  position: relative;
+  overflow: hidden;
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  // Room on the left for the tone stripe, and at the bottom for the timer.
+  padding: 0.7rem 0.75rem 0.8rem 0.95rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  box-shadow: 0 14px 38px rgb(0 0 0 / 0.42);
+}
+
+// A stripe rather than a full border: it says which kind at a glance without
+// tinting the text, which has to stay readable in both themes.
+.toast::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--accent);
+}
+
+.toast.error::before {
+  background: var(--danger);
+}
+
+.toast-text {
+  // Lets a long message wrap inside the flex row instead of pushing the close
+  // button out of the toast.
+  min-width: 0;
+}
+
+.toast-close {
+  flex-shrink: 0;
+  margin: -0.2rem -0.2rem 0 0;
+  padding: 0 0.2rem;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 1.05rem;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.toast-close:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.toast-action {
+  flex-shrink: 0;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.76rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.toast-action:hover {
+  opacity: 0.88;
+}
+
+// Runs down to nothing over the toast's own lifetime. Purely indicative — the
+// timer that actually removes it lives in the view.
+.toast-life {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 100%;
+  transform-origin: left;
+  background: var(--accent);
+  opacity: 0.55;
+  animation-name: toast-life;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+.toast.error .toast-life {
+  background: var(--danger);
+}
+
+@keyframes toast-life {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast-life {
+    display: none;
+  }
+}
