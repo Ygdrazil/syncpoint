@@ -1,37 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import * as api from "$lib/api";
-  import Hint from "$lib/Hint.svelte";
-  import { applyTheme } from "$lib/theme";
-  import type { Settings, Theme } from "$lib/types";
+  import type { Settings } from "$lib/types";
 
   let settings = $state<Settings | null>(null);
   let error = $state("");
   let isDev = $state(false);
 
-  const BUILT_IN: { value: Theme; label: string }[] = [
-    { value: "system", label: "System" },
-    { value: "light", label: "Light" },
-    { value: "dark", label: "Dark" }
-  ];
-
-  const CATPPUCCIN: { value: Theme; label: string }[] = [
-    { value: "catppuccin-latte", label: "Latte" },
-    { value: "catppuccin-frappe", label: "Frappé" },
-    { value: "catppuccin-macchiato", label: "Macchiato" },
-    { value: "catppuccin-mocha", label: "Mocha" }
-  ];
-
-  // Mirrors settings.theme for the select. Kept in step explicitly at each
-  // point settings changes rather than through an effect, which would fight
-  // the binding and snap the dropdown back while the user was choosing.
-  let theme = $state<Theme>("system");
-
   onMount(() => {
-    api.getSettings().then((value) => {
-      settings = value;
-      theme = value.theme;
-    });
+    api.getSettings().then((value) => (settings = value));
     api.getAppInfo().then((info) => (isDev = info.isDev));
   });
 
@@ -40,18 +17,12 @@
     const previous = settings;
     const next = { ...settings, ...patch };
     settings = next;
-    // Theme is applied straight away rather than waiting for the round trip,
-    // so the click feels instant.
-    if (patch.theme) applyTheme(patch.theme);
     error = "";
     try {
       settings = await api.saveSettings(next);
-      theme = settings.theme;
     } catch (err) {
       error = String(err);
       settings = previous;
-      theme = previous.theme;
-      applyTheme(previous.theme);
     }
   }
 </script>
@@ -78,49 +49,6 @@
         rather than an installed app.
       </small>
     {/if}
-  </div>
-
-  <div class="setting">
-    <span class="title">
-      Appearance
-      <Hint label="About appearance">
-        System follows your macOS light/dark setting.
-      </Hint>
-    </span>
-    <select class="narrow-wide" bind:value={theme} onchange={() => update({ theme })}>
-      <optgroup label="Built-in">
-        {#each BUILT_IN as option (option.value)}
-          <option value={option.value}>{option.label}</option>
-        {/each}
-      </optgroup>
-      <optgroup label="Catppuccin">
-        {#each CATPPUCCIN as option (option.value)}
-          <option value={option.value}>{option.label}</option>
-        {/each}
-      </optgroup>
-    </select>
-  </div>
-
-  <div class="setting">
-    <span class="title">
-      Main window
-      <Hint label="About compact mode">
-        Hides the detail pane and narrows the window to the profile list — a
-        slim column to leave open beside your work. Anything that opens the
-        profile editor brings the pane back, and turns this off with it.
-      </Hint>
-    </span>
-    <label class="check">
-      <input
-        type="checkbox"
-        checked={settings.compact}
-        onchange={(e) => update({ compact: e.currentTarget.checked })}
-      />
-      <span>
-        Compact: show only the profile list
-        <small>Everything a profile needs is on its right-click menu.</small>
-      </span>
-    </label>
   </div>
 
   {#if error}

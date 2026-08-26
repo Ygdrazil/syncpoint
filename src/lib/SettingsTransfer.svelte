@@ -8,6 +8,9 @@
   // is infrastructure detail a file you hand to someone else should not leak
   // unless you meant it to.
   let includeConnections = $state(false);
+  // Off by default too: theme and profile defaults are this machine's
+  // preferences, not something an imported file should silently overwrite.
+  let includePreferences = $state(false);
   let busy = $state(false);
   let error = $state("");
   let notice = $state("");
@@ -30,10 +33,10 @@
 
     busy = true;
     try {
-      const count = await api.exportConfig(path, includeConnections);
+      const count = await api.exportConfig(path, includeConnections, includePreferences);
       notice = `Exported ${count} profile(s)${
         includeConnections ? " with connections" : " without connections"
-      } to ${path}.`;
+      }${includePreferences ? " and appearance/defaults" : ""} to ${path}.`;
     } catch (err) {
       error = String(err);
     } finally {
@@ -84,6 +87,13 @@
       <small>They carry hostnames, usernames and key paths.</small>
     </span>
   </label>
+  <label class="check">
+    <input type="checkbox" bind:checked={includePreferences} />
+    <span>
+      Include appearance &amp; defaults
+      <small>Theme, and what a new profile is seeded with.</small>
+    </span>
+  </label>
   <span class="row">
     <button class="primary" disabled={busy} onclick={exportConfig}>Export…</button>
   </span>
@@ -125,6 +135,9 @@
       <div><dt>Connections added</dt><dd>{summary.connectionsAdded}</dd></div>
       <div><dt>Connections updated</dt><dd>{summary.connectionsUpdated}</dd></div>
     </dl>
+    {#if summary.preferencesApplied}
+      <p class="alert ok">Appearance and defaults from the file were applied.</p>
+    {/if}
     {#if summary.profilesDisabled > 0}
       <p class="alert">
         {summary.profilesDisabled} running profile(s) were paused: this file

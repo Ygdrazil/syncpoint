@@ -12,7 +12,8 @@ const NATIVE: Record<Theme, "light" | "dark" | null> = {
   "catppuccin-latte": "light",
   "catppuccin-frappe": "dark",
   "catppuccin-macchiato": "dark",
-  "catppuccin-mocha": "dark"
+  "catppuccin-mocha": "dark",
+  dracula: "dark"
 };
 
 /// Apply a theme to the current window.

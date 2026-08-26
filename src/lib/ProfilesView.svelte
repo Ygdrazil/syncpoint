@@ -162,6 +162,9 @@
     const out: Row[] = [];
 
     const walk = (parentId: string | null, depth: number) => {
+      // Bounded so a tree that is somehow cyclic cannot recurse forever here,
+      // mirroring isSelfOrDescendant below.
+      if (depth > folders.length) return;
       for (const child of childrenOf(parentId)) {
         if (child.kind === "profile") {
           out.push({ kind: "profile", depth, profile: child.profile });

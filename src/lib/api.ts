@@ -43,8 +43,11 @@ export const openAbout = (autoUpdate?: boolean) =>
   invoke<void>("open_about", { autoUpdate });
 export const takeAutoUpdate = () => invoke<boolean | null>("take_auto_update");
 
-export const exportConfig = (path: string, includeConnections: boolean) =>
-  invoke<number>("export_config", { path, includeConnections });
+export const exportConfig = (
+  path: string,
+  includeConnections: boolean,
+  includePreferences: boolean
+) => invoke<number>("export_config", { path, includeConnections, includePreferences });
 export const importConfig = (path: string) => invoke<ImportSummary>("import_config", { path });
 
 export const getSettings = () => invoke<Settings>("get_settings");

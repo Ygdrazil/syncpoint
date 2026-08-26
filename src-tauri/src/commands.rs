@@ -183,8 +183,14 @@ pub fn export_config(
     state: State<'_, AppState>,
     path: String,
     include_connections: bool,
+    include_preferences: bool,
 ) -> Result<usize, String> {
-    let bundle = transfer::export(&state.snapshot(), include_connections, state::now_secs());
+    let bundle = transfer::export(
+        &state.snapshot(),
+        include_connections,
+        include_preferences,
+        state::now_secs(),
+    );
     let count = bundle.profiles.len();
     let json = serde_json::to_string_pretty(&bundle)
         .map_err(|e| format!("Could not serialize the export: {e}"))?;
@@ -210,6 +216,12 @@ pub fn import_config(app: AppHandle, path: String) -> Result<ImportSummary, Stri
             .filter(|p| !p.enabled)
             .map(|p| p.id.clone())
             .collect();
+        // replace_collections deliberately leaves settings alone (see its own
+        // doc comment) — preferences opted into the bundle are the one case an
+        // import does carry, so they're written back separately.
+        if summary.preferences_applied {
+            *state.settings.lock().unwrap() = config.settings.clone();
+        }
         state.replace_collections(config);
         (summary, stopped)
     };

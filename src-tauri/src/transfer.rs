@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::connection::Connection;
 use crate::folder::Folder;
 use crate::profile::Profile;
+use crate::settings::Theme;
 use crate::store::Config;
 
 /// Bumped only if the shape changes incompatibly; import refuses anything newer
@@ -25,6 +26,24 @@ pub struct Bundle {
     pub folders: Vec<Folder>,
     #[serde(default)]
     pub profiles: Vec<Profile>,
+    /// Omitted unless the user opts in: unlike profiles and connections, these
+    /// are this machine's preferences, not setup a file should silently carry
+    /// onto another machine by default.
+    #[serde(default)]
+    pub preferences: Option<Preferences>,
+}
+
+/// The subset of `Settings` an export can optionally carry: appearance and
+/// what a new profile is seeded with. `openAtStartup`/`compact`/`paused` stay
+/// out — those are this window's/this launch's state, not "defaults".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Preferences {
+    pub theme: Theme,
+    pub default_excludes: Vec<String>,
+    pub default_remote_prefix: String,
+    pub default_local_root: String,
+    pub default_debounce_ms: u64,
 }
 
 #[derive(Debug, Default, Clone, Serialize)]
@@ -40,9 +59,16 @@ pub struct ImportSummary {
     /// Running profiles switched off because the import replaced the
     /// connection they send through.
     pub profiles_disabled: usize,
+    /// Whether the file carried appearance/defaults and they were applied.
+    pub preferences_applied: bool,
 }
 
-pub fn export(config: &Config, include_connections: bool, exported_at: u64) -> Bundle {
+pub fn export(
+    config: &Config,
+    include_connections: bool,
+    include_preferences: bool,
+    exported_at: u64,
+) -> Bundle {
     Bundle {
         version: BUNDLE_VERSION,
         exported_at,
@@ -53,6 +79,17 @@ pub fn export(config: &Config, include_connections: bool, exported_at: u64) -> B
         },
         folders: config.folders.clone(),
         profiles: config.profiles.clone(),
+        preferences: if include_preferences {
+            Some(Preferences {
+                theme: config.settings.theme,
+                default_excludes: config.settings.default_excludes.clone(),
+                default_remote_prefix: config.settings.default_remote_prefix.clone(),
+                default_local_root: config.settings.default_local_root.clone(),
+                default_debounce_ms: config.settings.default_debounce_ms,
+            })
+        } else {
+            None
+        },
     }
 }
 
@@ -139,6 +176,16 @@ pub fn import(config: &mut Config, bundle: Bundle) -> Result<ImportSummary, Stri
     // A profile whose folder did not come with it belongs at the top level
     // rather than pointing at nothing.
     crate::folder::normalize(config);
+
+    if let Some(preferences) = bundle.preferences {
+        config.settings.theme = preferences.theme;
+        config.settings.default_excludes = preferences.default_excludes;
+        config.settings.default_remote_prefix = preferences.default_remote_prefix;
+        config.settings.default_local_root = preferences.default_local_root;
+        config.settings.default_debounce_ms = preferences.default_debounce_ms;
+        summary.preferences_applied = true;
+    }
+
     Ok(summary)
 }
 
@@ -190,6 +237,7 @@ mod tests {
             connections,
             folders: vec![],
             profiles,
+            preferences: None,
         }
     }
 
@@ -238,17 +286,26 @@ mod tests {
 
     #[test]
     fn connections_are_left_out_unless_requested() {
-        let bundle = export(&config(), false, 0);
+        let bundle = export(&config(), false, false, 0);
         assert!(bundle.connections.is_empty());
         assert_eq!(bundle.profiles.len(), 1);
 
-        let with = export(&config(), true, 0);
+        let with = export(&config(), true, false, 0);
         assert_eq!(with.connections.len(), 1);
     }
 
     #[test]
+    fn preferences_are_left_out_unless_requested() {
+        let bundle = export(&config(), false, false, 0);
+        assert!(bundle.preferences.is_none());
+
+        let with = export(&config(), false, true, 0);
+        assert!(with.preferences.is_some());
+    }
+
+    #[test]
     fn a_bundle_round_trips_through_json() {
-        let bundle = export(&config(), true, 1_700_000_000);
+        let bundle = export(&config(), true, true, 1_700_000_000);
         let json = serde_json::to_string_pretty(&bundle).unwrap();
         let back: Bundle = serde_json::from_str(&json).unwrap();
 
@@ -256,6 +313,34 @@ mod tests {
         assert_eq!(back.exported_at, 1_700_000_000);
         assert_eq!(back.profiles[0].name, "profile-p1");
         assert_eq!(back.connections[0].host, "example.com");
+        assert!(back.preferences.is_some());
+    }
+
+    #[test]
+    fn importing_applies_preferences_only_when_the_bundle_carries_them() {
+        let mut target = config();
+        target.settings.default_debounce_ms = 999;
+
+        let summary = import(&mut target, bundle(vec![], vec![])).unwrap();
+        assert!(!summary.preferences_applied);
+        assert_eq!(target.settings.default_debounce_ms, 999, "left alone without opt-in");
+
+        let mut incoming = bundle(vec![], vec![]);
+        incoming.preferences = Some(Preferences {
+            theme: Theme::Dark,
+            default_excludes: vec!["*.log".into()],
+            default_remote_prefix: "/srv".into(),
+            default_local_root: "/Users/me".into(),
+            default_debounce_ms: 250,
+        });
+        let summary = import(&mut target, incoming).unwrap();
+
+        assert!(summary.preferences_applied);
+        assert_eq!(target.settings.theme, Theme::Dark);
+        assert_eq!(target.settings.default_excludes, vec!["*.log".to_string()]);
+        assert_eq!(target.settings.default_remote_prefix, "/srv");
+        assert_eq!(target.settings.default_local_root, "/Users/me");
+        assert_eq!(target.settings.default_debounce_ms, 250);
     }
 
     #[test]
@@ -267,6 +352,7 @@ mod tests {
             folders: vec![],
             connections: vec![connection("c2")],
             profiles: vec![profile("p2", "c2")],
+            preferences: None,
         };
 
         let summary = import(&mut target, incoming).unwrap();
@@ -291,6 +377,7 @@ mod tests {
                 folders: vec![],
                 connections: vec![],
                 profiles: vec![renamed],
+                preferences: None,
             },
         )
         .unwrap();
@@ -313,6 +400,7 @@ mod tests {
                 connections: vec![connection("c1")],
                 // Exported while running, so enabled in the file.
                 profiles: vec![profile("p1", "c1")],
+                preferences: None,
             },
         )
         .unwrap();
@@ -335,6 +423,7 @@ mod tests {
                 // Exported without connections, so p1 points at nothing.
                 connections: vec![],
                 profiles: vec![profile("p1", "c1")],
+                preferences: None,
             },
         )
         .unwrap();
@@ -356,6 +445,7 @@ mod tests {
                 folders: vec![],
                 connections: vec![],
                 profiles: vec![profile("p1", "c1")],
+                preferences: None,
             },
         );
         assert!(result.is_err());

@@ -107,7 +107,8 @@ export type Theme =
   | "catppuccin-latte"
   | "catppuccin-frappe"
   | "catppuccin-macchiato"
-  | "catppuccin-mocha";
+  | "catppuccin-mocha"
+  | "dracula";
 
 export type Settings = {
   theme: Theme;
@@ -136,6 +137,8 @@ export type ImportSummary = {
   /// Running profiles switched off because the import replaced the connection
   /// they send through.
   profilesDisabled: number;
+  /// Whether the file carried appearance/defaults and they were applied.
+  preferencesApplied: boolean;
 };
 
 export type AppInfo = {

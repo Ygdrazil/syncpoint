@@ -388,6 +388,146 @@ select:focus {
   font-size: 0.72rem;
 }
 
+/* Appearance pickers: theme and main-window layout --------------------- */
+
+.picker-group-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin: 1rem 0 0.5rem;
+}
+
+.picker-group-label:first-child {
+  margin-top: 0;
+}
+
+.picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 0.6rem;
+  max-width: 520px;
+}
+
+.picker-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.5rem;
+}
+
+.picker-card.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.theme-swatch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  height: 2.2rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.swatch-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.swatch-dot.text {
+  background: var(--text);
+}
+
+.swatch-dot.ok {
+  background: var(--ok);
+}
+
+.swatch-dot.danger {
+  background: var(--danger);
+}
+
+.picker-card-label {
+  font-size: 0.8rem;
+  font-weight: 550;
+  color: var(--text);
+  text-align: center;
+}
+
+.window-mock {
+  display: flex;
+  height: 2.2rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+// Same outer frame as Normal — compact narrows what's *inside* it, so the
+// two cards read as the same window, not two differently-sized boxes.
+// Centered with flex rather than by resizing/margining the frame itself.
+.window-mock.compact {
+  justify-content: center;
+  align-items: center;
+}
+
+.window-mock-sidebar {
+  width: 42%;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.2rem;
+  padding: 0 0.35rem;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+}
+
+.window-mock.compact .window-mock-sidebar {
+  width: 58%;
+  height: 70%;
+  flex-shrink: 0;
+  align-items: center;
+  border-right: none;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+.window-mock.compact .mock-row {
+  width: 70%;
+}
+
+.window-mock-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.25rem;
+  padding: 0 0.4rem;
+  min-width: 0;
+}
+
+.mock-row {
+  height: 0.24rem;
+  border-radius: 999px;
+  background: var(--muted);
+  opacity: 0.6;
+}
+
+.mock-line {
+  height: 0.2rem;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.mock-line.short {
+  width: 60%;
+}
+
 /* Toasts ---------------------------------------------------------------- */
 //
 // For things that just happened. Above everything, bottom right, and out of
@@ -415,8 +555,8 @@ select:focus {
   overflow: hidden;
   pointer-events: auto;
   display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
+  flex-direction: column;
+  gap: 0.6rem;
   // Room on the left for the tone stripe, and at the bottom for the timer.
   padding: 0.7rem 0.75rem 0.8rem 0.95rem;
   border: 1px solid var(--border);
@@ -426,6 +566,25 @@ select:focus {
   font-size: 0.82rem;
   line-height: 1.45;
   box-shadow: 0 14px 38px rgb(0 0 0 / 0.42);
+}
+
+.toast-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.toast-icon {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+  color: var(--accent);
+}
+
+// Its own row below the message rather than crowded onto one line with the
+// close button — the whole point is that it reads as a deliberate choice.
+.toast-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 // A stripe rather than a full border: it says which kind at a glance without

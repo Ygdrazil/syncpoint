@@ -92,6 +92,23 @@ $themes: (
     ok: #a6e3a1,
     warn: #f9e2af,
   ),
+
+  // Dracula, from the official palette at draculatheme.com/contribute.
+  // Background and Current Line are the only two neutral tones the spec
+  // defines — panel is interpolated between them, since (unlike Catppuccin's
+  // base/mantle/crust) Dracula has no third surface tone of its own.
+  "dracula": (
+    scheme: dark,
+    bg: #282a36,
+    panel: #2f3241,
+    border: #44475a,
+    text: #f8f8f2,
+    muted: #6272a4,
+    accent: #bd93f9,
+    danger: #ff5555,
+    ok: #50fa7b,
+    warn: #ffb86c,
+  ),
 );
 
 /// Used when no theme is chosen, picked by the OS preference. Referencing the
@@ -130,6 +147,26 @@ $system-dark: "dark";
   @each $name, $theme in $themes {
     :root[data-theme="#{$name}"] {
       @include tokens($theme);
+    }
+  }
+
+  // Scoped previews for the theme picker: each swatch carries its own copy of
+  // that theme's tokens without touching :root, so every option can render on
+  // screen at once regardless of which theme is actually applied.
+  @each $name, $theme in $themes {
+    .theme-swatch[data-theme="#{$name}"] {
+      @include tokens($theme);
+    }
+  }
+
+  // "system" has no entry in $themes — its swatch splits the same way the
+  // root's own system fallback does, just scoped to the swatch instead.
+  .theme-swatch[data-theme="system"] {
+    @include tokens(map.get($themes, $system-light));
+  }
+  @media (prefers-color-scheme: dark) {
+    .theme-swatch[data-theme="system"] {
+      @include tokens(map.get($themes, $system-dark));
     }
   }
 }

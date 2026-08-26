@@ -18,6 +18,7 @@ pub enum Theme {
     CatppuccinMacchiato,
     #[serde(rename = "catppuccin-mocha")]
     CatppuccinMocha,
+    Dracula,
 }
 
 /// Seeded into every new profile. Kept here rather than in the frontend so the
@@ -226,6 +227,7 @@ mod tests {
             (Theme::CatppuccinFrappe, "\"catppuccin-frappe\""),
             (Theme::CatppuccinMacchiato, "\"catppuccin-macchiato\""),
             (Theme::CatppuccinMocha, "\"catppuccin-mocha\""),
+            (Theme::Dracula, "\"dracula\""),
         ] {
             let json = serde_json::to_string(&theme).unwrap();
             assert_eq!(json, expected);
@@ -248,6 +250,7 @@ mod tests {
             Theme::CatppuccinFrappe,
             Theme::CatppuccinMacchiato,
             Theme::CatppuccinMocha,
+            Theme::Dracula,
         ] {
             let serialized = serde_json::to_string(&theme).unwrap();
             let key = format!("{}:", serialized); // e.g. "catppuccin-mocha":

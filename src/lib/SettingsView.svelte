@@ -2,15 +2,17 @@
   import { onMount } from "svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import * as api from "$lib/api";
+  import SettingsAppearance from "$lib/SettingsAppearance.svelte";
   import SettingsConnections from "$lib/SettingsConnections.svelte";
   import SettingsDefaults from "$lib/SettingsDefaults.svelte";
   import SettingsGeneral from "$lib/SettingsGeneral.svelte";
   import SettingsTransfer from "$lib/SettingsTransfer.svelte";
 
-  type Category = "general" | "connections" | "defaults" | "transfer";
+  type Category = "general" | "appearance" | "connections" | "defaults" | "transfer";
 
   const CATEGORIES: { id: Category; label: string }[] = [
     { id: "general", label: "General" },
+    { id: "appearance", label: "Appearance" },
     { id: "connections", label: "SSH Connections" },
     { id: "defaults", label: "Profile defaults" },
     { id: "transfer", label: "Import & export" }
@@ -65,6 +67,8 @@
     <div class="pane">
       {#if category === "general"}
         <SettingsGeneral />
+      {:else if category === "appearance"}
+        <SettingsAppearance />
       {:else if category === "connections"}
         <SettingsConnections />
       {:else if category === "defaults"}
