@@ -25,6 +25,15 @@ pub fn build_args(profile: &Profile, connection: &Connection, rsync: &RsyncInfo)
         "-v".to_string(), // per-file lines, which become the log output
         "-h".to_string(),
     ];
+    // rsync stamps mtimes on every directory it walks, which the remote refuses
+    // for any directory the SSH user does not own: a tree holding root-created
+    // directories fills the log with "failed to set times ... Operation not
+    // permitted" and ends at exit 23. Directory mtimes take no part in the
+    // skip-unchanged check, so leaving them costs nothing — unlike dropping -t
+    // as a whole, which would make every later run re-examine every file.
+    // openrsync accepts this despite not listing it in --help.
+    args.push("--omit-dir-times".to_string());
+
     if rsync.protects_args {
         // Keep one quoting behaviour across every rsync: this app escapes the
         // remote path itself, which rsync 3.2.4+ would otherwise double up on.
@@ -248,6 +257,19 @@ mod tests {
         let args = build_args(&profile(), &connection(), &modern());
         assert!(args.contains(&"--delete".to_string()));
         assert!(args.contains(&"--delete-excluded".to_string()));
+    }
+
+    #[test]
+    fn directory_times_are_left_to_the_remote() {
+        // Setting them fails on every directory the SSH user does not own, and
+        // that is most of what a root-created remote tree reports. The file
+        // times -a brings stay: without those, every later run re-examines
+        // every file.
+        for rsync in [modern(), openrsync()] {
+            let args = build_args(&profile(), &connection(), &rsync);
+            assert!(args.contains(&"--omit-dir-times".to_string()));
+            assert!(args.contains(&"-a".to_string()), "file times still preserved");
+        }
     }
 
     #[test]
