@@ -104,6 +104,10 @@ pub(super) mod tests {
         describe("/usr/bin/rsync", "openrsync: protocol version 29", "")
     }
 
+    pub(in crate::rsync) fn ancient() -> RsyncInfo {
+        describe("/usr/bin/rsync", "rsync  version 2.6.9  protocol version 29", "")
+    }
+
     #[test]
     fn version_banners_are_classified_correctly() {
         let modern = modern();
@@ -119,7 +123,7 @@ pub(super) mod tests {
         assert!(!old.supports_progress);
 
         // rsync 2.6.9 is real rsync, but still predates --info.
-        let ancient = describe("/usr/bin/rsync", "rsync  version 2.6.9  protocol version 29", "");
+        let ancient = ancient();
         assert!(!ancient.is_openrsync);
         assert_eq!(ancient.major, 2);
         assert!(!ancient.supports_progress);

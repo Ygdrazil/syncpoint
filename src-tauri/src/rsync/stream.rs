@@ -3,13 +3,14 @@
 //! Two jobs: batching the log so a large sync cannot flood the webview, and
 //! picking the progress line out of ordinary output.
 
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
 use tokio::sync::mpsc::{self, UnboundedSender};
-use tokio::time::MissedTickBehavior;
+use tokio::time::{timeout, MissedTickBehavior};
 
 /// How often batched output is pushed to the frontend.
 const FLUSH_INTERVAL_MS: u64 = 100;
@@ -20,6 +21,14 @@ const FLUSH_INTERVAL_MS: u64 = 100;
 /// webview's main thread. Dropped lines are counted, never silently lost: the
 /// complete transcript still goes to stderr.
 const MAX_BATCH_LINES: usize = 400;
+/// How long to keep reading stderr once rsync has exited.
+///
+/// EOF can be a long way off: an ssh client hands its stderr to the SSH master,
+/// which keeps it until the remote closes the session. With a stuck remote that
+/// may be never, and waiting would leave a finished run showing as syncing,
+/// holding its session permit, with its error unreported. What rsync wrote
+/// itself is already in the pipe, so this only has to be long enough to read it.
+const STDERR_DRAIN: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -178,6 +187,40 @@ pub(super) async fn read_segments<R: AsyncRead + Unpin>(reader: R, mut emit: imp
     splitter.flush(&mut emit);
 }
 
+/// rsync's stderr, collected as well as streamed, so a failure can report the
+/// actual reason rather than just an exit code.
+pub(super) struct StderrLines {
+    lines: Arc<Mutex<Vec<String>>>,
+    reader: tauri::async_runtime::JoinHandle<()>,
+}
+
+impl StderrLines {
+    pub(super) fn read<R>(stderr: R, mut on_line: impl FnMut(&str) + Send + 'static) -> Self
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+    {
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let sink = lines.clone();
+        let reader = tauri::async_runtime::spawn(async move {
+            read_segments(stderr, |line| {
+                on_line(&line);
+                sink.lock().unwrap().push(line);
+            })
+            .await;
+        });
+        Self { lines, reader }
+    }
+
+    /// Everything read by the time stderr closes or [`STDERR_DRAIN`] runs out.
+    /// Call once rsync has exited.
+    pub(super) async fn finish(mut self) -> Vec<String> {
+        if timeout(STDERR_DRAIN, &mut self.reader).await.is_err() {
+            self.reader.abort();
+        }
+        std::mem::take(&mut *self.lines.lock().unwrap())
+    }
+}
+
 pub(super) fn log(tx: &UnboundedSender<LogLine>, profile_id: &str, stream: &'static str, line: String) {
     // Mirrored to stderr as well as the UI, so a full transcript can be
     // captured to a file for bug reports. See "Getting logs" in the README.
@@ -188,6 +231,60 @@ pub(super) fn log(tx: &UnboundedSender<LogLine>, profile_id: &str, stream: &'sta
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::process::Stdio;
+    use std::time::Instant;
+    use tokio::process::{Child, Command};
+
+    fn shell(script: &str) -> Child {
+        Command::new("/bin/sh")
+            .args(["-c", script])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_stderr_held_open_cannot_keep_a_finished_run_waiting() {
+        // `sleep` inherits stderr and outlives the shell, the way an SSH master
+        // outlives the rsync whose ssh handed it that stderr.
+        let mut child = shell("echo boom >&2; sleep 8 & exit 30");
+        let stderr = StderrLines::read(child.stderr.take().unwrap(), |_| {});
+        assert_eq!(child.wait().await.unwrap().code(), Some(30));
+
+        let started = Instant::now();
+        let lines = stderr.finish().await;
+
+        assert_eq!(lines, ["boom"]);
+        assert!(started.elapsed() < Duration::from_secs(6), "{:?}", started.elapsed());
+    }
+
+    #[tokio::test]
+    async fn a_stderr_that_closes_is_not_waited_on_at_all() {
+        let mut child = shell("echo boom >&2");
+        let stderr = StderrLines::read(child.stderr.take().unwrap(), |_| {});
+        child.wait().await.unwrap();
+
+        let started = Instant::now();
+        assert_eq!(stderr.finish().await, ["boom"]);
+        assert!(started.elapsed() < STDERR_DRAIN, "{:?}", started.elapsed());
+    }
+
+    #[tokio::test]
+    async fn a_line_that_is_not_utf8_does_not_end_collection() {
+        // A remote shell profile printing Latin-1 reaches here through ssh. If
+        // that ended the read, rsync's next error would find the pipe closed and
+        // end the run, and the line saying what went wrong would never arrive.
+        let mut child = shell(r"printf 'first\n\351\nlast\n' >&2");
+        let stderr = StderrLines::read(child.stderr.take().unwrap(), |_| {});
+        assert_eq!(child.wait().await.unwrap().code(), Some(0));
+
+        let lines = stderr.finish().await;
+
+        assert_eq!(lines.first().map(String::as_str), Some("first"));
+        assert_eq!(lines.last().map(String::as_str), Some("last"));
+    }
 
     #[test]
     fn batches_stay_bounded_and_keep_the_newest_lines() {

@@ -8,12 +8,48 @@ pub use binary::{detect, RsyncInfo};
 use std::process::Stdio;
 
 use tauri::{AppHandle, Emitter};
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use crate::connection::Connection;
 use crate::profile::Profile;
-use stream::{log, parse_progress, read_segments, spawn_log_flusher, SyncProgress};
+use stream::{log, parse_progress, read_segments, spawn_log_flusher, StderrLines, SyncProgress};
+
+/// How long rsync goes without any I/O before giving up.
+///
+/// Without it, a quiet host can be waited on with nothing on the wire at all, so
+/// even a dead network goes unnoticed while the run holds one of that SSH
+/// master's session permits. This counts silence, not duration, so a transfer
+/// that keeps moving can run for hours. A real rsync remote told about the
+/// timeout sends keepalives through long quiet phases, so this does not fail a
+/// remote that is merely busy. An openrsync remote sends none and enforces the
+/// limit itself, so a Mac remote comparing a file of tens of gigabytes can fail
+/// here.
+///
+/// It does not end every stuck run. rsync 3.x counts its own keepalive writes as
+/// I/O, so a remote that wedges while the link stays up can outlast it, and on a
+/// dead link the run usually ends when ssh gives up rather than at this limit.
+const IO_TIMEOUT_SECS: u32 = 300;
+
+/// The same limit under openrsync, which enforces `--timeout` locally but never
+/// forwards it. The remote is not told, so it sends no keepalives, and a healthy
+/// one walking a large tree says nothing until it is done. Long enough to only
+/// ever catch a hang.
+const OPENRSYNC_IO_TIMEOUT_SECS: u32 = 3600;
+
+/// The `--timeout` for this binary, if it should get one at all.
+///
+/// Real rsync before 3.x gets none. Its timer only counts reads, and a sender
+/// does not read during a file, so one 60 second write stall would end an upload
+/// that had been moving for minutes.
+fn io_timeout(rsync: &RsyncInfo) -> Option<u32> {
+    if rsync.is_openrsync {
+        Some(OPENRSYNC_IO_TIMEOUT_SECS)
+    } else if rsync.major >= 3 {
+        Some(IO_TIMEOUT_SECS)
+    } else {
+        None
+    }
+}
 
 pub fn build_args(profile: &Profile, connection: &Connection, rsync: &RsyncInfo) -> Vec<String> {
     // The baseline is flags that exist in rsync 2.6.9, so the same command
@@ -33,6 +69,9 @@ pub fn build_args(profile: &Profile, connection: &Connection, rsync: &RsyncInfo)
     // as a whole, which would make every later run re-examine every file.
     // openrsync accepts this despite not listing it in --help.
     args.push("--omit-dir-times".to_string());
+    if let Some(timeout) = io_timeout(rsync) {
+        args.push(format!("--timeout={timeout}"));
+    }
 
     if rsync.protects_args {
         // Keep one quoting behaviour across every rsync: this app escapes the
@@ -90,19 +129,10 @@ pub async fn run(
     let stdout = child.stdout.take().expect("stdout was piped");
     let stderr = child.stderr.take().expect("stderr was piped");
 
-    let mut stderr_reader = BufReader::new(stderr).lines();
-
-    // stderr is collected as well as streamed, so a failure can report the
-    // actual reason rather than just an exit code.
     let tx_err = tx.clone();
     let id_err = profile.id.clone();
-    let stderr_task = tauri::async_runtime::spawn(async move {
-        let mut collected = Vec::new();
-        while let Ok(Some(line)) = stderr_reader.next_line().await {
-            log(&tx_err, &id_err, "stderr", line.clone());
-            collected.push(line);
-        }
-        collected
+    let stderr = StderrLines::read(stderr, move |line| {
+        log(&tx_err, &id_err, "stderr", line.to_string());
     });
 
     let mut files = 0usize;
@@ -133,7 +163,7 @@ pub async fn run(
         .wait()
         .await
         .map_err(|e| format!("rsync did not finish: {e}"))?;
-    let stderr_lines = stderr_task.await.unwrap_or_default();
+    let stderr_lines = stderr.finish().await;
 
     // Closing the last sender lets the flusher emit its tail and finish.
     drop(tx);
@@ -183,19 +213,40 @@ fn ssh_connect_failure(stderr: &[String]) -> Option<&String> {
         .find(|l| l.trim_start().starts_with("ssh: connect to host"))
 }
 
+/// openrsync's report of `--timeout` firing, if it made one.
+///
+/// rsync 3.x exits 30, but openrsync has no such code: it ends on whatever the
+/// transport left behind, and 1, 12, 20 and 247 all turned up in testing. Exit 1
+/// would then read as a usage error, so this line is the only reliable sign.
+/// Matched on its whole shape, `rsync(<pid>): error: poll: timeout`, so a file
+/// named with those words on one line cannot trip it. openrsync prints the same
+/// prefix for a per-file error, which then ends in the reason instead.
+fn openrsync_timeout(stderr: &[String]) -> Option<&String> {
+    stderr.iter().find(|l| {
+        let l = l.trim();
+        l.starts_with("rsync(") && l.ends_with("): error: poll: timeout")
+    })
+}
+
+const TIMED_OUT: &str = "Timed out waiting on the remote host.";
+
 fn explain(code: i32, stderr: &[String]) -> String {
     // A host that cannot be reached says so through ssh, whichever exit code
     // rsync settles on afterwards — 255 and 12 both appear for it. That beats
     // the code-based guess, which sent people to debug keys that were fine.
-    if ssh_connect_failure(stderr).is_some() {
-        let detail = most_useful_lines(stderr)
-            .into_iter()
-            .map(|l| l.trim())
-            .collect::<Vec<_>>()
-            .join(" / ");
+    if let Some(line) = ssh_connect_failure(stderr) {
         return format!(
-            "Could not reach the host. It may be down, restarting, or unreachable from              this network — the connection never got as far as logging in. (exit {code})              — {detail}"
+            "Could not reach the host. It may be down, restarting, or unreachable from \
+             this network — the connection never got as far as logging in. (exit {code}) \
+             — {}",
+            line.trim()
         );
+    }
+
+    // The line itself rather than the usual tail, which on openrsync is only the
+    // call chain it printed afterwards (io_read_buf, io_read_int).
+    if let Some(line) = openrsync_timeout(stderr) {
+        return format!("{TIMED_OUT} (exit {code}) — {}", line.trim());
     }
 
     let hint = match code {
@@ -207,7 +258,7 @@ fn explain(code: i32, stderr: &[String]) -> String {
         12 => "Protocol error, usually a failed SSH session or no rsync on the remote host.",
         13 => "Permission denied on the remote side.",
         23 => "Partial transfer — some files could not be sent (permissions?).",
-        30 => "Timed out waiting on the remote host.",
+        30 => TIMED_OUT,
         255 => "SSH connection failed. The host answered but the session did not start: \
                 with BatchMode on, key auth has to work already. Use Test on this \
                 connection in Settings to see ssh's own reason.",
@@ -231,7 +282,7 @@ fn explain(code: i32, stderr: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::binary::tests::{modern, openrsync};
+    use super::binary::tests::{ancient, modern, openrsync};
 
 
 
@@ -297,6 +348,35 @@ mod tests {
             let args = build_args(&profile(), &connection(), &rsync);
             assert!(args.contains(&"--omit-dir-times".to_string()));
             assert!(args.contains(&"-a".to_string()), "file times still preserved");
+        }
+    }
+
+    #[test]
+    fn openrsync_tolerates_more_silence_because_it_never_tells_the_remote() {
+        // A real rsync remote only sends keepalives when told the timeout, and
+        // openrsync does not forward it. The short limit would fail a healthy
+        // remote walking a large tree, which is a sync that works without it.
+        let timeout_of = |rsync| {
+            build_args(&profile(), &connection(), &rsync)
+                .into_iter()
+                .find(|a| a.starts_with("--timeout="))
+        };
+        assert_eq!(timeout_of(modern()), Some(format!("--timeout={IO_TIMEOUT_SECS}")));
+        assert_eq!(
+            timeout_of(openrsync()),
+            Some(format!("--timeout={OPENRSYNC_IO_TIMEOUT_SECS}"))
+        );
+    }
+
+    #[test]
+    fn real_rsync_before_3_gets_no_timeout_because_its_timer_only_counts_reads() {
+        // A banner that cannot be read lands on major 0, and gets the same.
+        let mut unreadable = modern();
+        unreadable.major = 0;
+
+        for rsync in [ancient(), unreadable] {
+            let args = build_args(&profile(), &connection(), &rsync);
+            assert!(!args.iter().any(|a| a.starts_with("--timeout")), "{args:?}");
         }
     }
 
@@ -386,7 +466,24 @@ mod tests {
             assert!(message.contains("Could not reach the host"), "{message}");
             assert!(message.contains("Operation timed out"), "{message}");
             assert!(!message.contains("key auth"), "still blames the key: {message}");
+            assert!(!message.contains("  "), "stray gap in the sentence: {message}");
         }
+    }
+
+    #[test]
+    fn openrsyncs_call_chain_does_not_push_out_the_reason_a_host_was_unreachable() {
+        // The real shape: ssh's line, then openrsync's own trail after it. The
+        // last two lines are that trail, which tell nobody anything.
+        let stderr = vec![
+            "ssh: connect to host h port 22: Connection refused".to_string(),
+            "rsync(1): error: unexpected end of file".to_string(),
+            "rsync(1): error: io_read_buf".to_string(),
+            "rsync(1): error: io_read_int".to_string(),
+            "rsync(1): warning: child 2 exited with status 255".to_string(),
+        ];
+        let message = explain(255, &stderr);
+        assert!(message.contains("Could not reach the host"), "{message}");
+        assert!(message.contains("Connection refused"), "{message}");
     }
 
     #[test]
@@ -401,6 +498,45 @@ mod tests {
         let message = explain(11, &stderr);
         assert!(!message.contains("Could not reach the host"), "{message}");
         assert!(message.contains("could not read or write"), "{message}");
+    }
+
+    #[test]
+    fn a_stall_reads_as_a_timeout_on_either_rsync() {
+        let stderr = vec![
+            "[sender] io timeout after 300 seconds -- exiting".to_string(),
+            "rsync error: timeout in data send/receive (code 30) at io.c(248) [sender=3.5.0]".to_string(),
+        ];
+        let message = explain(30, &stderr);
+        assert!(message.contains("Timed out"), "{message}");
+        assert!(message.contains("io timeout after 300 seconds"), "{message}");
+
+        // Every code openrsync was seen ending on after a stall. Exit 1 is the
+        // one that matters: on its own it would be called a usage error.
+        for code in [1, 12, 20, 247] {
+            let stderr = vec![
+                "rsync(70204): error: poll: timeout".to_string(),
+                "rsync(70204): error: io_read_buf".to_string(),
+                "rsync(70204): error: io_read_int".to_string(),
+            ];
+            let message = explain(code, &stderr);
+            assert!(message.contains("Timed out"), "{message}");
+            assert!(message.contains("poll: timeout"), "{message}");
+            assert!(!message.contains("usage error"), "{message}");
+        }
+    }
+
+    #[test]
+    fn a_file_named_like_a_timeout_does_not_read_as_one() {
+        for line in [
+            "rsync: failed to open \"rsync(1): error: poll: timeout\": Permission denied (13)",
+            "rsync: readlink_stat(\"logs\"): error: poll: timeout",
+            // openrsync's own per-file shape, which shares the stall's prefix.
+            "rsync(70204): error: /src/plain): error: poll: timeout: open (2) in /src: Permission denied",
+        ] {
+            let message = explain(23, &[line.to_string()]);
+            assert!(!message.contains("Timed out"), "{message}");
+            assert!(message.contains("Partial transfer"), "{message}");
+        }
     }
 
     #[test]
