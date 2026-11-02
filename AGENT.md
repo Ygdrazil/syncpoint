@@ -49,6 +49,7 @@ Because each window is a separate webview (separate JS realm), there is no share
 | `rsync/stream.rs` | Batches stdout/stderr into throttled UI events, parses `--info=progress2` lines |
 | `connection.rs` | SSH connection record + injection-safe arg building + live `ssh` test |
 | `profile.rs` | Sync profile record + destination-safety validation |
+| `template.rs` | The path templates that prefill a new profile's source and target (`/home/code/dev/{slug}`) |
 | `folder.rs` | The folder tree profiles live in (folders and profiles share one ordering per level) |
 | `transfer.rs` | Export/import bundles (merge-by-id, re-validates untrusted input) |
 | `tray.rs` / `menu.rs` | Tray icon, app menu, window open/focus, quit-vs-hide |
@@ -62,6 +63,8 @@ One `notify` watcher + one unbounded `mpsc` channel per enabled profile (`engine
 ### Destination-safety invariants
 
 `Connection::check_safe()` (leading-`-` and whitespace rejected in host/user/identity-file — otherwise `ssh` reads a hostile value as a flag, e.g. `-oProxyCommand=...`) is deliberately separate from `Connection::validate()` (machine-local checks, e.g. does this key file exist *here*). `transfer::import` calls `check_safe()` on every incoming connection but not the full `validate()`, because an imported bundle may legitimately name a key path from a different Mac — that's a reason it can't run yet, not a reason to reject the import. Keep that split if you touch either path.
+
+Path templates only ever prefill a form. What gets saved is plain text, so changing a template can never move an existing profile's destination; don't re-render a saved profile. A value with nothing to give stays in the path as `{slug}` rather than disappearing, because `/home/code/dev/{slug}` with no slug would otherwise sync onto `/home/code/dev/` with delete on, and `Profile::validate` refuses a path still holding one.
 
 `profile.rs::PROTECTED_REMOTE_PATHS` blocks syncing (with `--delete` on by default) straight onto `/`, `/etc`, `/usr`, `/home`, `~`, etc., and `.`/`..` path segments are rejected outright since they resolve on the remote shell, past this app's own checks. If you add a new way to set a profile's remote path (bulk edit, template, whatever), route it through `Profile::validate()`, don't reimplement the checks.
 

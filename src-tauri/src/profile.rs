@@ -3,6 +3,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::connection::Connection;
+use crate::template;
 
 fn default_delete() -> bool {
     true
@@ -86,6 +87,16 @@ impl Profile {
     pub fn validate(&self) -> Result<(), String> {
         if self.name.trim().is_empty() {
             return Err("Name is required.".into());
+        }
+        // Left there by a template with nothing to put in it. Going ahead without
+        // it could mean syncing onto the parent of what was meant, with delete on.
+        for path in [&self.source, &self.remote_path] {
+            if let Some(value) = template::unfilled(path) {
+                return Err(format!(
+                    "{path} still has {{{value}}} in it, and this profile has nothing to fill \
+                     it with. Finish the path by hand."
+                ));
+            }
         }
         let source = Path::new(&self.source);
         if !source.is_absolute() {
@@ -208,6 +219,27 @@ mod tests {
         let off = raw.replace("\"delete\": true", "\"delete\": false");
         let profile: Profile = serde_json::from_str(&off).unwrap();
         assert!(!profile.delete);
+    }
+
+    #[test]
+    fn a_path_still_waiting_on_a_template_value_is_refused() {
+        let mut waiting = profile();
+        waiting.remote_path = "/home/code/dev/{slug}".into();
+        let error = waiting.validate().unwrap_err();
+        assert!(error.contains("{slug}"), "{error}");
+
+        let mut waiting = profile();
+        waiting.source = "/Users/me/{folder}/x".into();
+        let error = waiting.validate().unwrap_err();
+        assert!(error.contains("{folder}"), "{error}");
+    }
+
+    #[test]
+    fn braces_that_are_not_a_template_value_are_just_a_folder_name() {
+        let mut odd = profile();
+        odd.source = std::env::temp_dir().to_string_lossy().into_owned();
+        odd.remote_path = "/data/{other}/x".into();
+        assert!(odd.validate().is_ok());
     }
 
     #[test]

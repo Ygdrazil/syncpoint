@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::template;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Theme {
@@ -45,13 +47,19 @@ pub struct Settings {
     /// touch existing profiles — they keep whatever they were saved with.
     #[serde(default = "default_excludes")]
     pub default_excludes: Vec<String>,
-    /// Prefilled into a new profile's remote path, e.g. `/srv/apps`. Empty
-    /// means no prefill. Stored without a trailing slash.
+    /// Prefilled into a new profile's source path, e.g. `~/dev/{slug}`. Empty
+    /// means no prefill. Stored without a trailing slash. See `template`.
     #[serde(default)]
-    pub default_remote_prefix: String,
-    /// Where the folder picker opens when choosing a profile's source. Not
-    /// prefilled into the field: a partial local path would fail validation
-    /// immediately, since the source must be a directory that exists.
+    pub source_template: String,
+    /// The same for its remote path, e.g. `/home/code/dev/{slug}`.
+    #[serde(default)]
+    pub target_template: String,
+    /// Written by versions before templates. Read once by
+    /// [`Settings::adopt_legacy_prefix`], and never written back.
+    #[serde(default, rename = "defaultRemotePrefix", skip_serializing)]
+    pub legacy_remote_prefix: Option<String>,
+    /// Where the folder picker opens when choosing a profile's source, and what
+    /// `{source_rel}` is measured from.
     #[serde(default)]
     pub default_local_root: String,
     #[serde(default = "default_debounce_ms")]
@@ -69,10 +77,8 @@ pub struct Settings {
 
 impl Settings {
     pub fn validate(&self) -> Result<(), String> {
-        let prefix = self.default_remote_prefix.trim();
-        if !prefix.is_empty() && !prefix.starts_with('/') && !prefix.starts_with("~/") {
-            return Err("Remote path prefix must start with / or ~/.".into());
-        }
+        template::check_source(&self.source_template)?;
+        template::check_target(&self.target_template)?;
         let local = self.default_local_root.trim();
         if !local.is_empty() && !local.starts_with('/') {
             return Err("Local folder must be an absolute path.".into());
@@ -83,17 +89,37 @@ impl Settings {
         Ok(())
     }
 
-    /// Store one canonical form so the frontend can append a separator without
-    /// having to guess whether the user typed one.
+    /// Store one canonical form, however the user typed it.
     pub fn normalize(&mut self) {
-        let prefix = self.default_remote_prefix.trim().trim_end_matches('/');
-        self.default_remote_prefix = prefix.to_string();
+        self.source_template = self.source_template.trim().trim_end_matches('/').to_string();
+        self.target_template = self.target_template.trim().trim_end_matches('/').to_string();
         let local = self.default_local_root.trim().trim_end_matches('/');
         self.default_local_root = local.to_string();
         for pattern in &mut self.default_excludes {
             *pattern = pattern.trim().to_string();
         }
         self.default_excludes.retain(|p| !p.is_empty());
+    }
+
+    /// Carry a saved remote path prefix over to a template.
+    pub fn adopt_legacy_prefix(&mut self) {
+        if let Some(prefix) = self.legacy_remote_prefix.take() {
+            if self.target_template.is_empty() {
+                self.target_template = template_from_prefix(&prefix);
+            }
+        }
+    }
+}
+
+/// `/srv/apps` becomes `/srv/apps/{slug}`. The prefill used to stop at the prefix
+/// for the user to finish, and left as it was, forgetting to would send every
+/// profile to the same folder, wiping each other's files with delete on.
+pub fn template_from_prefix(prefix: &str) -> String {
+    let prefix = prefix.trim().trim_end_matches('/');
+    if prefix.is_empty() {
+        String::new()
+    } else {
+        format!("{prefix}/{{slug}}")
     }
 }
 
@@ -106,7 +132,9 @@ impl Default for Settings {
             theme: Theme::default(),
             open_at_startup: false,
             default_excludes: default_excludes(),
-            default_remote_prefix: String::new(),
+            source_template: String::new(),
+            target_template: String::new(),
+            legacy_remote_prefix: None,
             default_local_root: String::new(),
             default_debounce_ms: default_debounce_ms(),
             compact: false,
@@ -149,15 +177,52 @@ mod tests {
     }
 
     #[test]
-    fn normalize_strips_trailing_slashes_from_the_prefix() {
+    fn normalize_strips_trailing_slashes_from_the_templates() {
         for input in ["/srv/apps/", "/srv/apps///", "  /srv/apps  "] {
             let mut settings = Settings {
-                default_remote_prefix: input.into(),
+                source_template: input.into(),
+                target_template: input.into(),
                 ..Settings::default()
             };
             settings.normalize();
-            assert_eq!(settings.default_remote_prefix, "/srv/apps", "from {input:?}");
+            assert_eq!(settings.source_template, "/srv/apps", "from {input:?}");
+            assert_eq!(settings.target_template, "/srv/apps", "from {input:?}");
         }
+    }
+
+    #[test]
+    fn a_saved_prefix_becomes_a_template_and_is_not_written_back() {
+        let mut settings: Settings =
+            serde_json::from_str(r#"{"defaultRemotePrefix":"/srv/apps"}"#).unwrap();
+
+        settings.adopt_legacy_prefix();
+
+        assert_eq!(settings.target_template, "/srv/apps/{slug}");
+        assert_eq!(settings.legacy_remote_prefix, None);
+        let written = serde_json::to_string(&settings).unwrap();
+        assert!(!written.contains("defaultRemotePrefix"), "{written}");
+    }
+
+    #[test]
+    fn an_empty_saved_prefix_stays_no_prefill() {
+        let mut settings: Settings =
+            serde_json::from_str(r#"{"defaultRemotePrefix":""}"#).unwrap();
+
+        settings.adopt_legacy_prefix();
+
+        assert_eq!(settings.target_template, "");
+    }
+
+    #[test]
+    fn a_template_already_set_is_not_replaced_by_an_old_prefix() {
+        let mut settings: Settings = serde_json::from_str(
+            r#"{"defaultRemotePrefix":"/old","targetTemplate":"/new/{name}"}"#,
+        )
+        .unwrap();
+
+        settings.adopt_legacy_prefix();
+
+        assert_eq!(settings.target_template, "/new/{name}");
     }
 
     #[test]
@@ -171,8 +236,12 @@ mod tests {
     }
 
     #[test]
-    fn validate_requires_an_absolute_or_home_relative_prefix() {
-        let ok = |p: &str| Settings { default_remote_prefix: p.into(), ..Settings::default() }.validate();
+    fn validate_runs_the_template_checks_on_both() {
+        let source = |t: &str| Settings { source_template: t.into(), ..Settings::default() }.validate();
+        assert!(source("~/dev/{slug}").is_ok());
+        assert!(source("/x/{source_name}").is_err());
+
+        let ok = |p: &str| Settings { target_template: p.into(), ..Settings::default() }.validate();
         assert!(ok("").is_ok(), "empty means no prefill");
         assert!(ok("/srv/apps").is_ok());
         assert!(ok("~/apps").is_ok());

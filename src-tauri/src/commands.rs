@@ -17,6 +17,7 @@ use crate::profile::Profile;
 use crate::rsync::RsyncInfo;
 use crate::settings::Settings;
 use crate::store;
+use crate::template;
 use crate::folder::{self, Folder, ItemKind};
 use crate::transfer::{self, Bundle, ImportSummary};
 use crate::version;
@@ -430,6 +431,25 @@ pub async fn test_connection(candidate: Connection) -> Result<String, String> {
 
 /// Create or update a profile. The watcher is restarted from the saved values
 /// so an edit to source, excludes or debounce takes effect immediately.
+/// A new profile's paths as they stand, from whatever its form holds so far.
+#[tauri::command]
+pub fn render_profile_paths(state: State<'_, AppState>, draft: Profile) -> template::Rendered {
+    let settings = state.settings.lock().unwrap().clone();
+    let folders = state.folders.lock().unwrap().clone();
+    let connection = state.connection(&draft.connection_id);
+    template::render(&settings, &draft, connection.as_ref(), &folders)
+}
+
+/// What these templates give for a made-up profile, while they are being edited.
+#[tauri::command]
+pub fn preview_path_templates(
+    source_template: String,
+    target_template: String,
+    local_root: String,
+) -> template::Rendered {
+    template::preview(&source_template, &target_template, &local_root)
+}
+
 /// Save a profile and put it in place, returning it as stored.
 fn store_profile(state: &AppState, mut incoming: Profile) -> Result<Profile, String> {
     let mut config = state.snapshot();

@@ -36,6 +36,7 @@ pub fn load(dir: &Path) -> Config {
     let path = config_path(dir);
     if let Ok(raw) = fs::read_to_string(&path) {
         let mut config: Config = serde_json::from_str(&raw).unwrap_or_default();
+        config.settings.adopt_legacy_prefix();
         // A hand-edited or half-written file must still produce a drawable tree.
         crate::folder::normalize(&mut config);
         return config;
@@ -288,6 +289,22 @@ mod tests {
         assert_eq!(loaded.settings, crate::settings::Settings::default());
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_config_with_a_remote_prefix_loads_with_a_template() {
+        let dir = std::env::temp_dir().join(format!("syncpoint-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            config_path(&dir),
+            r#"{"settings":{"defaultRemotePrefix":"/srv/apps"}}"#,
+        )
+        .unwrap();
+
+        let config = load(&dir);
+
+        assert_eq!(config.settings.target_template, "/srv/apps/{slug}");
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

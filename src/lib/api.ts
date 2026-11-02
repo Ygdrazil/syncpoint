@@ -7,6 +7,7 @@ import type {
   ImportSummary,
   ItemKind,
   Profile,
+  RenderedPaths,
   RsyncInfo,
   Settings,
   SyncStatus
@@ -58,6 +59,15 @@ export const saveConnection = (incoming: Connection) =>
 export const deleteConnection = (id: string) => invoke<string[]>("delete_connection", { id });
 export const testConnection = (candidate: Connection) =>
   invoke<string>("test_connection", { candidate });
+
+export const renderProfilePaths = (draft: Profile) =>
+  invoke<RenderedPaths>("render_profile_paths", { draft });
+export const previewPathTemplates = (
+  sourceTemplate: string,
+  targetTemplate: string,
+  localRoot: string
+) =>
+  invoke<RenderedPaths>("preview_path_templates", { sourceTemplate, targetTemplate, localRoot });
 
 export const saveProfile = (incoming: Profile) => invoke<Profile>("save_profile", { incoming });
 export const deleteProfile = (id: string) => invoke<void>("delete_profile", { id });

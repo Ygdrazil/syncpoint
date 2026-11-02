@@ -115,15 +115,23 @@ export type Settings = {
   openAtStartup: boolean;
   /// Seeded into new profiles. Editing it leaves existing profiles alone.
   defaultExcludes: string[];
-  /// Prefilled into a new profile's remote path. Stored without a trailing slash.
-  defaultRemotePrefix: string;
-  /// Where the folder picker opens. Not prefilled into the source field.
+  /// Prefilled into a new profile's source path, e.g. `~/dev/{slug}`.
+  sourceTemplate: string;
+  /// Prefilled into a new profile's remote path, e.g. `/srv/{slug}`.
+  targetTemplate: string;
+  /// Where the folder picker opens, and what `{source_rel}` is measured from.
   defaultLocalRoot: string;
   defaultDebounceMs: number;
   /// Hide the detail pane and narrow the main window to the profile list.
   compact: boolean;
   /// Global suspend; leaves each profile's own enabled flag untouched.
   paused: boolean;
+};
+
+/// A new profile's paths, from the templates in `Settings`.
+export type RenderedPaths = {
+  source: string;
+  target: string;
 };
 
 export type ImportSummary = {
@@ -164,21 +172,20 @@ export function emptyConnection(): Connection {
 export function emptyProfile(
   connectionId = "",
   excludes: string[] = [],
-  remotePrefix = "",
-  debounceMs = 500
+  debounceMs = 500,
+  folderId: string | null = null
 ): Profile {
   return {
     id: "",
     name: "",
     source: "",
     connectionId,
-    // The stored prefix carries no trailing slash, so add the separator here.
-    remotePath: remotePrefix ? `${remotePrefix}/` : "",
+    remotePath: "",
     enabled: true,
     delete: true,
     // Seeded from settings rather than hardcoded here.
     excludes: [...excludes],
-    folderId: null,
+    folderId,
     // The backend puts a new profile after everything already at its level.
     position: 0,
     debounceMs

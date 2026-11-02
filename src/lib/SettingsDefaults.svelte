@@ -2,12 +2,31 @@
   import { onMount } from "svelte";
   import * as api from "$lib/api";
   import Hint from "$lib/Hint.svelte";
-  import type { Settings } from "$lib/types";
+  import type { RenderedPaths, Settings } from "$lib/types";
 
   import { open } from "@tauri-apps/plugin-dialog";
 
+  /// Written out here, in braces Svelte would otherwise try to evaluate.
+  const VALUES: [string, string][] = [
+    ["{name}", "the profile name as typed"],
+    ["{slug}", "the name made safe for a path"],
+    ["{folder}", "its sidebar folder"],
+    ["{folder_path}", "that folder and its parents"],
+    ["{connection}", "the connection's name"],
+    ["{user}", "the SSH user"],
+    ["{host}", "the SSH host"],
+    ["{home}", "your home folder on this Mac"],
+    ["{machine}", "this Mac's name"]
+  ];
+  const SOURCE_VALUES: [string, string][] = [
+    ["{source_name}", "the last part of the source path"],
+    ["{source_parent}", "the folder above it"],
+    ["{source_rel}", "the source path, from the folder to browse from"]
+  ];
+
   let settings = $state<Settings | null>(null);
-  let prefix = $state("");
+  let sourceTemplate = $state("");
+  let targetTemplate = $state("");
   let localRoot = $state("");
   let debounce = $state(500);
   let excludesText = $state("");
@@ -23,7 +42,8 @@
 
   function load(value: Settings) {
     settings = value;
-    prefix = value.defaultRemotePrefix;
+    sourceTemplate = value.sourceTemplate;
+    targetTemplate = value.targetTemplate;
     localRoot = value.defaultLocalRoot;
     debounce = value.defaultDebounceMs;
     excludesText = value.defaultExcludes.join("\n");
@@ -40,16 +60,31 @@
 
   let dirty = $derived(
     settings
-      ? prefix.trim() !== settings.defaultRemotePrefix ||
+      ? sourceTemplate.trim() !== settings.sourceTemplate ||
+        targetTemplate.trim() !== settings.targetTemplate ||
         localRoot.trim() !== settings.defaultLocalRoot ||
         debounce !== settings.defaultDebounceMs ||
         parse(excludesText).join("\n") !== settings.defaultExcludes.join("\n")
       : false
   );
 
-  // Shown so the effect of the prefix is obvious before saving.
-  let preview = $derived(
-    prefix.trim() ? `${prefix.trim().replace(/\/+$/, "")}/` : "(empty — nothing prefilled)"
+  // Shown so the effect of a template is obvious before saving.
+  const NOTHING = "(empty — nothing prefilled)";
+  let preview = $state<RenderedPaths>({ source: "", target: "" });
+  let previewRequest = 0;
+  $effect(() => {
+    const request = ++previewRequest;
+    api
+      .previewPathTemplates(sourceTemplate, targetTemplate, localRoot)
+      .then((paths) => {
+        if (request === previewRequest) preview = paths;
+      })
+      .catch(() => {});
+  });
+
+  // With nothing in it to tell profiles apart, they would all get one destination.
+  let targetIsFixed = $derived(
+    targetTemplate.trim() !== "" && !/\{[a-z_]+\}/.test(targetTemplate)
   );
 
   onMount(() => {
@@ -63,7 +98,8 @@
       load(
         await api.saveSettings({
           ...settings,
-          defaultRemotePrefix: prefix.trim(),
+          sourceTemplate: sourceTemplate.trim(),
+          targetTemplate: targetTemplate.trim(),
           defaultLocalRoot: localRoot.trim(),
           defaultDebounceMs: debounce,
           defaultExcludes: parse(excludesText)
@@ -90,30 +126,60 @@
 {#if settings}
   <div class="setting">
     <span class="title">
-      Remote path prefix
-      <Hint label="About the remote path prefix">
-        Prefilled into the remote path of a new profile, so you only type the
-        last part. Must start with <code>/</code> or <code>~/</code>; leave empty
-        for no prefill.
+      Source path template
+      <Hint label="About the source path template">
+        Prefilled into the source path of a new profile. Must start with
+        <code>/</code>, <code>~/</code> or <code>{"{home}"}</code>; leave empty for
+        no prefill.<br /><br />
+        {#each VALUES as [value, meaning] (value)}
+          <code>{value}</code> {meaning}<br />
+        {/each}
       </Hint>
     </span>
     <input
-      bind:value={prefix}
-      placeholder="/srv/apps"
+      bind:value={sourceTemplate}
+      placeholder={"~/dev/{slug}"}
       autocapitalize="off"
       autocorrect="off"
       spellcheck="false"
     />
-    <small>New profiles start with: <code>{preview}</code></small>
+    <small>Example: <code>{preview.source || NOTHING}</code></small>
+  </div>
+
+  <div class="setting">
+    <span class="title">
+      Remote path template
+      <Hint label="About the remote path template">
+        Prefilled into the remote path of a new profile. Must start with
+        <code>/</code>, <code>~/</code> or <code>{"{home}"}</code>; leave empty for
+        no prefill.<br /><br />
+        {#each [...VALUES, ...SOURCE_VALUES] as [value, meaning] (value)}
+          <code>{value}</code> {meaning}<br />
+        {/each}
+      </Hint>
+    </span>
+    <input
+      bind:value={targetTemplate}
+      placeholder={"/home/you/dev/{slug}"}
+      autocapitalize="off"
+      autocorrect="off"
+      spellcheck="false"
+    />
+    <small>Example: <code>{preview.target || NOTHING}</code></small>
+    {#if targetIsFixed}
+      <p class="alert">
+        Nothing here tells profiles apart, so every new one gets this same path.
+        With delete on, they would wipe each other's files.
+      </p>
+    {/if}
   </div>
 
   <div class="setting">
     <span class="title">
       Local folder to browse from
       <Hint label="About the folder to browse from">
-        Where the folder picker opens when choosing a profile's source. It is not
-        prefilled into the field — a partial local path would fail validation
-        straight away, since the source has to be a folder that exists.
+        Where the folder picker opens when choosing a profile's source, and what
+        <code>{"{source_rel}"}</code> is measured from.
       </Hint>
     </span>
     <span class="row">

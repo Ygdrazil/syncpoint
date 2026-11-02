@@ -5,8 +5,9 @@ use serde::{Deserialize, Serialize};
 use crate::connection::Connection;
 use crate::folder::Folder;
 use crate::profile::Profile;
-use crate::settings::Theme;
+use crate::settings::{template_from_prefix, Theme};
 use crate::store::Config;
+use crate::template;
 
 /// Bumped only if the shape changes incompatibly; import refuses anything newer
 /// than it understands rather than silently dropping fields.
@@ -41,9 +42,26 @@ pub struct Bundle {
 pub struct Preferences {
     pub theme: Theme,
     pub default_excludes: Vec<String>,
+    /// How files from before templates carry this. Still written, empty, because
+    /// those versions refuse a file without it.
+    #[serde(default)]
     pub default_remote_prefix: String,
+    #[serde(default)]
+    pub source_template: String,
+    #[serde(default)]
+    pub target_template: String,
     pub default_local_root: String,
     pub default_debounce_ms: u64,
+}
+
+impl Preferences {
+    fn effective_target_template(&self) -> String {
+        if self.target_template.trim().is_empty() {
+            template_from_prefix(&self.default_remote_prefix)
+        } else {
+            self.target_template.clone()
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, Serialize)]
@@ -83,7 +101,9 @@ pub fn export(
             Some(Preferences {
                 theme: config.settings.theme,
                 default_excludes: config.settings.default_excludes.clone(),
-                default_remote_prefix: config.settings.default_remote_prefix.clone(),
+                default_remote_prefix: String::new(),
+                source_template: config.settings.source_template.clone(),
+                target_template: config.settings.target_template.clone(),
                 default_local_root: config.settings.default_local_root.clone(),
                 default_debounce_ms: config.settings.default_debounce_ms,
             })
@@ -125,6 +145,10 @@ pub fn import(config: &mut Config, bundle: Bundle) -> Result<ImportSummary, Stri
         connection
             .check_safe()
             .map_err(|e| format!("Connection \"{}\": {e}", connection.name))?;
+    }
+    if let Some(preferences) = &bundle.preferences {
+        template::check_source(&preferences.source_template)?;
+        template::check_target(&preferences.effective_target_template())?;
     }
 
     let mut summary = ImportSummary::default();
@@ -191,9 +215,10 @@ pub fn import(config: &mut Config, bundle: Bundle) -> Result<ImportSummary, Stri
     crate::folder::normalize(config);
 
     if let Some(preferences) = bundle.preferences {
+        config.settings.target_template = preferences.effective_target_template();
         config.settings.theme = preferences.theme;
         config.settings.default_excludes = preferences.default_excludes;
-        config.settings.default_remote_prefix = preferences.default_remote_prefix;
+        config.settings.source_template = preferences.source_template;
         config.settings.default_local_root = preferences.default_local_root;
         config.settings.default_debounce_ms = preferences.default_debounce_ms;
         summary.preferences_applied = true;
@@ -342,7 +367,9 @@ mod tests {
         incoming.preferences = Some(Preferences {
             theme: Theme::Dark,
             default_excludes: vec!["*.log".into()],
-            default_remote_prefix: "/srv".into(),
+            default_remote_prefix: String::new(),
+            source_template: "~/dev/{slug}".into(),
+            target_template: "/srv/{slug}".into(),
             default_local_root: "/Users/me".into(),
             default_debounce_ms: 250,
         });
@@ -351,9 +378,58 @@ mod tests {
         assert!(summary.preferences_applied);
         assert_eq!(target.settings.theme, Theme::Dark);
         assert_eq!(target.settings.default_excludes, vec!["*.log".to_string()]);
-        assert_eq!(target.settings.default_remote_prefix, "/srv");
+        assert_eq!(target.settings.source_template, "~/dev/{slug}");
+        assert_eq!(target.settings.target_template, "/srv/{slug}");
         assert_eq!(target.settings.default_local_root, "/Users/me");
         assert_eq!(target.settings.default_debounce_ms, 250);
+    }
+
+    #[test]
+    fn a_file_from_before_templates_still_imports_its_prefix() {
+        let mut target = Config::default();
+        let incoming: Bundle = serde_json::from_str(
+            r#"{"version":1,"exportedAt":0,"preferences":{"theme":"dark",
+                "defaultExcludes":[],"defaultRemotePrefix":"/srv/apps",
+                "defaultLocalRoot":"","defaultDebounceMs":500}}"#,
+        )
+        .unwrap();
+
+        import(&mut target, incoming).unwrap();
+
+        assert_eq!(target.settings.target_template, "/srv/apps/{slug}");
+    }
+
+    #[test]
+    fn an_exported_file_stays_readable_by_versions_before_templates() {
+        // They require this field, and refuse the whole file without it.
+        let mut config = Config::default();
+        config.settings.target_template = "/srv/{slug}".into();
+
+        let exported = serde_json::to_value(export(&config, false, true, 0)).unwrap();
+
+        assert_eq!(exported["preferences"]["defaultRemotePrefix"], "");
+        assert_eq!(exported["preferences"]["targetTemplate"], "/srv/{slug}");
+    }
+
+    #[test]
+    fn an_import_refuses_a_template_it_could_never_use() {
+        let bad = |source: &str, target: &str| Preferences {
+            theme: Theme::Dark,
+            default_excludes: vec![],
+            default_remote_prefix: String::new(),
+            source_template: source.into(),
+            target_template: target.into(),
+            default_local_root: String::new(),
+            default_debounce_ms: 500,
+        };
+        for preferences in [bad("/x/{source_name}", ""), bad("", "relative/{slug}"), bad("", "/x/{nope}")] {
+            let mut target = Config::default();
+            let mut incoming = bundle(vec![], vec![]);
+            incoming.preferences = Some(preferences);
+
+            assert!(import(&mut target, incoming).is_err());
+            assert_eq!(target.settings.target_template, "", "nothing half applied");
+        }
     }
 
     #[test]

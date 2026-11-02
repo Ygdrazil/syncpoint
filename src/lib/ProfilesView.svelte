@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { open } from "@tauri-apps/plugin-dialog";
   import { check } from "@tauri-apps/plugin-updater";
@@ -43,6 +43,32 @@
   let draft = $state<Profile | null>(null);
   let formError = $state("");
   let excludesText = $state("");
+  /// Whether each path is still what its template gave, rather than something
+  /// the user chose or typed.
+  let sourceIsPrefill = $state(false);
+  let targetIsPrefill = $state(false);
+  let prefillRequest = 0;
+
+  // A prefilled path follows what it is made from, until the field is touched.
+  // `{slug}` has nothing to give until the name is typed, so one fill when the
+  // form opens would leave most templates unfinished.
+  $effect(() => {
+    if (!draft || (!sourceIsPrefill && !targetIsPrefill)) return;
+    // What templates read. The rest of the form is left out so editing it does
+    // not ask again.
+    void [draft.name, draft.folderId, draft.connectionId, draft.source];
+    const request = ++prefillRequest;
+    const snapshot = untrack(() => $state.snapshot(draft)) as Profile;
+    api
+      .renderProfilePaths(snapshot)
+      .then((paths) => {
+        // A slower answer about an older draft must not overwrite a newer one.
+        if (request !== prefillRequest || !draft) return;
+        if (sourceIsPrefill) draft.source = paths.source;
+        if (targetIsPrefill) draft.remotePath = paths.target;
+      })
+      .catch(() => {});
+  });
 
   let selected = $derived(profiles.find((p) => p.id === selectedId) ?? null);
   let selectedLog = $derived(selectedId ? (logs[selectedId] ?? []) : []);
@@ -486,6 +512,7 @@
       listen<string>("new-profile-from", (event) => {
         startNew();
         if (draft) draft.source = event.payload;
+        sourceIsPrefill = false;
       })
     ];
 
@@ -524,21 +551,27 @@
     }
   })();
 
-  function startNew() {
+  function startNew(folderId: string | null = null) {
     draft = emptyProfile(
       connections[0]?.id ?? "",
       settings?.defaultExcludes ?? [],
-      settings?.defaultRemotePrefix ?? "",
-      settings?.defaultDebounceMs ?? 500
+      settings?.defaultDebounceMs ?? 500,
+      folderId
     );
+    // So the profile is on screen once it is saved.
+    if (folderId) collapsed[folderId] = false;
     excludesText = draft.excludes.join("\n");
     formError = "";
+    sourceIsPrefill = true;
+    targetIsPrefill = true;
   }
 
   function startEdit(profile: Profile) {
     draft = { ...profile, excludes: [...profile.excludes] };
     excludesText = profile.excludes.join("\n");
     formError = "";
+    sourceIsPrefill = false;
+    targetIsPrefill = false;
   }
 
   async function pickSource() {
@@ -549,7 +582,10 @@
       // system last left the picker.
       defaultPath: settings?.defaultLocalRoot || undefined
     });
-    if (typeof picked === "string" && draft) draft.source = picked;
+    if (typeof picked === "string" && draft) {
+      draft.source = picked;
+      sourceIsPrefill = false;
+    }
   }
 
   async function save(event: SubmitEvent) {
@@ -671,6 +707,8 @@
     };
     excludesText = draft.excludes.join("\n");
     formError = "";
+    sourceIsPrefill = false;
+    targetIsPrefill = false;
   }
 
   async function confirmDelete() {
@@ -747,7 +785,7 @@
   <ul class="context-menu" style="left: {createMenu.x}px; top: {createMenu.y}px">
     <li>
       {#if connections.length > 0}
-        <button onclick={startNew}>New profile</button>
+        <button onclick={() => startNew()}>New profile</button>
       {:else}
         <!-- A disabled item naming the fix without offering it is worse than
              sending them where the fix is. -->
@@ -762,6 +800,13 @@
   {@const target = folderMenu.folder}
   <ul class="context-menu" style="left: {folderMenu.x}px; top: {folderMenu.y}px">
     <li><button onclick={() => renameFolder(target)}>Rename…</button></li>
+    <li>
+      {#if connections.length > 0}
+        <button onclick={() => startNew(target.id)}>New profile here</button>
+      {:else}
+        <button onclick={() => api.openSettings("connections")}>Add a connection…</button>
+      {/if}
+    </li>
     <li><button onclick={() => newFolder(target.id)}>New folder inside</button></li>
     <li>
       <button class="danger" onclick={() => (pendingFolderDelete = target)}>Delete…</button>
@@ -898,7 +943,7 @@
                   e.preventDefault();
                   e.stopPropagation();
                   folderMenu = {
-                    ...placeMenu(e.clientX, e.clientY, 3),
+                    ...placeMenu(e.clientX, e.clientY, 4),
                     folder: row.folder
                   };
                 }}
@@ -997,7 +1042,7 @@
           <label>
             Local source folder
             <span class="row">
-              <input bind:value={draft.source} placeholder="/Users/you/project" required autocapitalize="off" autocorrect="off" spellcheck="false" />
+              <input bind:value={draft.source} oninput={() => (sourceIsPrefill = false)} placeholder="/Users/you/project" required autocapitalize="off" autocorrect="off" spellcheck="false" />
               <button type="button" onclick={pickSource}>Browse…</button>
             </span>
           </label>
@@ -1018,7 +1063,7 @@
 
           <label>
             Remote path
-            <input bind:value={draft.remotePath} placeholder="/srv/app or ~/app" required autocapitalize="off" autocorrect="off" spellcheck="false" />
+            <input bind:value={draft.remotePath} oninput={() => (targetIsPrefill = false)} placeholder="/srv/app or ~/app" required autocapitalize="off" autocorrect="off" spellcheck="false" />
           </label>
 
           <label>
@@ -1155,7 +1200,7 @@
         <div class="placeholder">
           <div class="stack">
             <p>Select a profile, or create one.</p>
-            <button class="primary" onclick={startNew}>New profile</button>
+            <button class="primary" onclick={() => startNew()}>New profile</button>
           </div>
         </div>
       {/if}
