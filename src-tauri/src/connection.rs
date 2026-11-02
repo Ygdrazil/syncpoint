@@ -15,6 +15,14 @@ use tokio::process::Command;
 const CONTROL_PATH: &str = "~/.ssh/syncpoint-cm-%C";
 const CONTROL_PERSIST_SECS: u32 = 300;
 
+/// How long ssh waits for a TCP connection before giving up.
+///
+/// Without this ssh inherits the kernel's SYN timeout — 75s on macOS
+/// (`net.inet.tcp.keepinit`). Syncs run unattended in a loop, so a host that
+/// has gone away costs 75 seconds per attempt and holds a session permit for
+/// all of it, while the Test button next to it answers in ten.
+const CONNECT_TIMEOUT_SECS: u32 = 10;
+
 /// Absolute paths only, checked in order. `/usr/bin/ssh` comes first: on a
 /// current macOS it sits on the SIP-protected system volume, so nothing — not
 /// even root — can overwrite it, which is the strongest guarantee available
@@ -165,6 +173,8 @@ impl Connection {
         // error instead of blocking forever on a prompt nobody can see.
         args.push("-o".to_string());
         args.push("BatchMode=yes".to_string());
+        args.push("-o".to_string());
+        args.push(format!("ConnectTimeout={CONNECT_TIMEOUT_SECS}"));
         args
     }
 
@@ -182,8 +192,6 @@ pub async fn test(connection: &Connection) -> Result<String, String> {
     connection.validate()?;
 
     let mut args = connection.ssh_args();
-    args.push("-o".to_string());
-    args.push("ConnectTimeout=10".to_string());
     // Belt and braces over check_safe: `--` ends option parsing, so even a
     // destination that slipped through cannot be read as an ssh option.
     args.push("--".to_string());
@@ -245,6 +253,14 @@ mod tests {
                 "rsync would split {arg:?} into separate arguments"
             );
         }
+    }
+
+    #[test]
+    fn every_ssh_the_app_runs_gives_up_on_an_unreachable_host() {
+        // Without this ssh waits out the kernel SYN timeout — 75s on macOS —
+        // on a path that runs unattended in a loop. It used to be set only on
+        // the Test button, the one place a human was already waiting.
+        assert!(connection().ssh_command().contains("ConnectTimeout="));
     }
 
     #[test]

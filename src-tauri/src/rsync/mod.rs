@@ -171,7 +171,33 @@ fn most_useful_lines(stderr: &[String]) -> Vec<&String> {
     }
 }
 
+/// ssh's own connect failure, if it reported one.
+///
+/// Matched on ssh's exact prefix rather than by scanning for words like
+/// "Permission denied": rsync prints that itself for ordinary per-file
+/// failures, so a looser search would relabel an exit 11 or 23 as a login
+/// problem. Only a line ssh wrote about reaching the host counts.
+fn ssh_connect_failure(stderr: &[String]) -> Option<&String> {
+    stderr
+        .iter()
+        .find(|l| l.trim_start().starts_with("ssh: connect to host"))
+}
+
 fn explain(code: i32, stderr: &[String]) -> String {
+    // A host that cannot be reached says so through ssh, whichever exit code
+    // rsync settles on afterwards — 255 and 12 both appear for it. That beats
+    // the code-based guess, which sent people to debug keys that were fine.
+    if ssh_connect_failure(stderr).is_some() {
+        let detail = most_useful_lines(stderr)
+            .into_iter()
+            .map(|l| l.trim())
+            .collect::<Vec<_>>()
+            .join(" / ");
+        return format!(
+            "Could not reach the host. It may be down, restarting, or unreachable from              this network — the connection never got as far as logging in. (exit {code})              — {detail}"
+        );
+    }
+
     let hint = match code {
         1 => "rsync usage error — check the excludes and paths.",
         2 => "Protocol mismatch between local and remote rsync.",
@@ -182,7 +208,9 @@ fn explain(code: i32, stderr: &[String]) -> String {
         13 => "Permission denied on the remote side.",
         23 => "Partial transfer — some files could not be sent (permissions?).",
         30 => "Timed out waiting on the remote host.",
-        255 => "SSH connection failed. With BatchMode on, key auth must already work: try `ssh <user>@<host>` once by hand to accept the host key and confirm the key is loaded.",
+        255 => "SSH connection failed. The host answered but the session did not start: \
+                with BatchMode on, key auth has to work already. Use Test on this \
+                connection in Settings to see ssh's own reason.",
         _ => "rsync failed.",
     };
 
@@ -342,6 +370,37 @@ mod tests {
         let message = explain(11, &stderr);
         assert!(message.contains("Permission denied"), "cause missing from: {message}");
         assert!(message.contains("exit 11"));
+    }
+
+    #[test]
+    fn a_host_that_cannot_be_reached_is_not_reported_as_an_auth_problem() {
+        // The old 255 text sent people to check their keys. These runs never
+        // got as far as logging in, and both exit codes show up for it.
+        for code in [255, 12] {
+            let stderr = vec![
+                "ssh: connect to host dockerdev-421.example port 22: Operation timed out".to_string(),
+                "rsync: connection unexpectedly closed (0 bytes received so far) [sender]".to_string(),
+                "rsync error: unexplained error (code 255) at io.c(285) [sender=3.5.0]".to_string(),
+            ];
+            let message = explain(code, &stderr);
+            assert!(message.contains("Could not reach the host"), "{message}");
+            assert!(message.contains("Operation timed out"), "{message}");
+            assert!(!message.contains("key auth"), "still blames the key: {message}");
+        }
+    }
+
+    #[test]
+    fn rsyncs_own_permission_errors_are_not_mistaken_for_a_login_failure() {
+        // rsync writes "Permission denied" for ordinary per-file failures, so
+        // anything matching on that word would relabel a working connection as
+        // a broken login. Only a line ssh wrote about reaching the host counts.
+        let stderr = vec![
+            "rsync: [Receiver] mkdir \"/srv/apps/site\" failed: Permission denied (13)".to_string(),
+            "rsync error: error in file IO (code 11) at main.c(791) [Receiver=3.2.7]".to_string(),
+        ];
+        let message = explain(11, &stderr);
+        assert!(!message.contains("Could not reach the host"), "{message}");
+        assert!(message.contains("could not read or write"), "{message}");
     }
 
     #[test]
