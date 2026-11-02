@@ -1,10 +1,12 @@
 //! Everything the frontend can invoke, plus the helpers those calls share.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
+use tokio::time::timeout;
 use uuid::Uuid;
 
 use crate::connection::{self, Connection};
@@ -18,6 +20,11 @@ use crate::store;
 use crate::folder::{self, Folder, ItemKind};
 use crate::transfer::{self, Bundle, ImportSummary};
 use crate::version;
+
+/// How long the profiles behind a warm-up wait for it. ConnectTimeout only covers
+/// reaching the host, so without this an ssh that hangs after that would leave
+/// them unsynced with nothing on screen to say so.
+const WARM_UP_LIMIT: Duration = Duration::from_secs(20);
 
 /// Tell every window the stored config changed. Connections are edited in the
 /// settings window but shown in the main one, so neither can rely on only its
@@ -533,15 +540,35 @@ pub fn set_paused(app: AppHandle, paused: bool) -> Result<(), String> {
     commit(&app)?;
 
     let profiles = app.state::<AppState>().profiles.lock().unwrap().clone();
-    for profile in profiles.iter().filter(|p| p.enabled) {
-        if paused {
+    let enabled: Vec<Profile> = profiles.into_iter().filter(|p| p.enabled).collect();
+    if paused {
+        for profile in &enabled {
             engine::stop(&app, &profile.id);
             state::set_status(&app, &profile.id, "paused", None);
-        } else if let Err(err) = engine::start(&app, profile) {
-            state::set_status(&app, &profile.id, "error", Some(err));
         }
+    } else {
+        start_all(&app, &enabled);
     }
     Ok(())
+}
+
+/// Start watching these profiles and catch them up together, as at launch or on
+/// Resume. Each going through `engine::start` would sync straight away, and they
+/// would race to open the SSH master. A profile that cannot start reports on
+/// itself and does not stop the others.
+pub fn start_all(app: &AppHandle, profiles: &[Profile]) {
+    let started: Vec<Profile> = profiles
+        .iter()
+        .filter(|profile| match engine::watch(app, profile) {
+            Ok(()) => true,
+            Err(err) => {
+                state::set_status(app, &profile.id, "error", Some(err));
+                false
+            }
+        })
+        .cloned()
+        .collect();
+    sync_together(app, started);
 }
 
 #[tauri::command]
@@ -643,18 +670,22 @@ pub fn sync_all(app: AppHandle) -> Result<usize, String> {
         .cloned()
         .collect();
     let queued = profiles.len();
+    sync_together(&app, profiles);
+    Ok(queued)
+}
 
-    // Grouped by SSH master, and each group opens its own before its profiles
-    // start.
-    //
-    // Every rsync runs its own ssh with `ControlMaster=auto`. Started together,
-    // they all find no socket, all try to become the master, and every loser
-    // reports `ControlSocket ... already exists, disabling multiplexing` and
-    // dials its own connection — one handshake per profile, which is the cost
-    // the socket exists to avoid.
-    //
-    // A group per master rather than one queue for all of them, so a host
-    // that is down holds up only its own profiles for the connect timeout.
+/// Sync these profiles at once, opening each SSH master before its profiles start.
+///
+/// Every rsync runs its own ssh with `ControlMaster=auto`. Started together,
+/// they all find no socket, all try to become the master, and every loser
+/// reports `ControlSocket ... already exists, disabling multiplexing` and dials
+/// its own connection — one handshake per profile, which is the cost the socket
+/// exists to avoid.
+///
+/// A group per master rather than one queue for all of them, so a host that is
+/// down holds up only its own profiles for the connect timeout.
+fn sync_together(app: &AppHandle, profiles: Vec<Profile>) {
+    let state = app.state::<AppState>();
     for (connection, group) in group_by_master(profiles, |id| state.connection(id)) {
         let asked_at: Vec<u64> = group.iter().map(|p| state.times_stopped(&p.id)).collect();
         let app = app.clone();
@@ -662,7 +693,7 @@ pub fn sync_all(app: AppHandle) -> Result<usize, String> {
             if let Some(connection) = connection {
                 // A failed warm-up is not worth reporting: the sync behind it
                 // makes the same connection and reports the real reason.
-                let _ = connection::test(&connection).await;
+                let _ = timeout(WARM_UP_LIMIT, connection::test(&connection)).await;
             }
             for (profile, asked_at) in group.iter().zip(asked_at) {
                 // The warm-up can take seconds on a slow host. Pausing, editing or
@@ -677,8 +708,6 @@ pub fn sync_all(app: AppHandle) -> Result<usize, String> {
             }
         });
     }
-
-    Ok(queued)
 }
 
 #[cfg(test)]

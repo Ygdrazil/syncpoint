@@ -232,6 +232,7 @@ pub async fn test(connection: &Connection) -> Result<String, String> {
     let output = Command::new(ssh_path())
         .args(&args)
         .stdin(Stdio::null())
+        .kill_on_drop(true)
         .output()
         .await
         .map_err(|e| format!("Could not start ssh: {e}"))?;

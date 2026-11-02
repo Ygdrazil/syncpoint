@@ -241,7 +241,24 @@ fn glob_match(pattern: &str, name: &str) -> bool {
     }
 }
 
+/// Start watching a profile, and sync it once to catch up.
 pub fn start(app: &AppHandle, profile: &Profile) -> Result<(), String> {
+    watch(app, profile)?;
+
+    // Reconcile immediately, and only once the idle status is in place —
+    // triggering earlier lets the loop publish "syncing" just before `watch`
+    // overwrites it with "idle", hiding a running sync.
+    //
+    // Without this reconcile at all, edits made while the app was closed would
+    // never be sent: the watcher only reports changes from now on, so the
+    // remote would sit stale while the UI claimed to be watching.
+    trigger(app, &profile.id, Trigger::Manual);
+    Ok(())
+}
+
+/// Start watching a profile without the first sync, which the caller then owes
+/// it. For profiles starting together: see `commands::start_all`.
+pub fn watch(app: &AppHandle, profile: &Profile) -> Result<(), String> {
     stop(app, &profile.id);
     profile.validate()?;
     if app.state::<AppState>().connection(&profile.connection_id).is_none() {
@@ -276,7 +293,6 @@ pub fn start(app: &AppHandle, profile: &Profile) -> Result<(), String> {
         .map_err(|e| format!("Could not watch {}: {e}", profile.source))?;
 
     spawn_sync_loop(app.clone(), profile.clone(), rx);
-    let initial = tx.clone();
 
     app.state::<AppState>().runtimes.lock().unwrap().insert(
         profile.id.clone(),
@@ -287,15 +303,6 @@ pub fn start(app: &AppHandle, profile: &Profile) -> Result<(), String> {
     );
 
     set_status(app, &profile.id, "idle", None);
-
-    // Reconcile immediately, and only once the idle status is in place —
-    // triggering earlier lets the loop publish "syncing" just before this
-    // function overwrites it with "idle", hiding a running sync.
-    //
-    // Without this reconcile at all, edits made while the app was closed would
-    // never be sent: the watcher only reports changes from now on, so the
-    // remote would sit stale while the UI claimed to be watching.
-    let _ = initial.send(Trigger::Manual);
     Ok(())
 }
 

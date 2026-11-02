@@ -76,12 +76,13 @@ pub fn run() {
             // Profiles left enabled resume watching on launch, unless the app
             // was suspended when it last quit.
             let handle = app.handle().clone();
-            for profile in profiles.iter().filter(|p| p.enabled) {
-                if paused {
+            let enabled: Vec<_> = profiles.into_iter().filter(|p| p.enabled).collect();
+            if paused {
+                for profile in &enabled {
                     state::set_status(&handle, &profile.id, "paused", None);
-                } else if let Err(err) = engine::start(&handle, profile) {
-                    state::set_status(&handle, &profile.id, "error", Some(err));
                 }
+            } else {
+                commands::start_all(&handle, &enabled);
             }
             Ok(())
         })
