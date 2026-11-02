@@ -248,8 +248,8 @@ pub fn preview(source_template: &str, target_template: &str, local_root: &str) -
     };
     let profile = Profile {
         id: String::new(),
-        name: "Site API Domain".into(),
-        source: format!("{base}/clients/site-api-domain"),
+        name: "My Project".into(),
+        source: format!("{base}/clients/my-project"),
         connection_id: "c".into(),
         remote_path: String::new(),
         enabled: true,
@@ -261,9 +261,9 @@ pub fn preview(source_template: &str, target_template: &str, local_root: &str) -
     };
     let connection = Connection {
         id: "c".into(),
-        name: "Dev box".into(),
-        user: "code".into(),
-        host: "dev".into(),
+        name: "My Server".into(),
+        user: "username".into(),
+        host: "example.com".into(),
         port: 22,
         identity_file: String::new(),
     };
@@ -564,8 +564,8 @@ mod tests {
     fn the_settings_example_goes_through_the_real_rendering() {
         let rendered = preview("/a/{folder_path}/{slug}", "/b/{source_rel}", "/Users/me/dev/");
 
-        assert_eq!(rendered.source, "/a/clients/acme/site-api-domain");
-        assert_eq!(rendered.target, "/b/clients/site-api-domain");
+        assert_eq!(rendered.source, "/a/clients/acme/my-project");
+        assert_eq!(rendered.target, "/b/clients/my-project");
     }
 
     #[test]
