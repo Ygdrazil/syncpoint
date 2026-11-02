@@ -209,13 +209,22 @@ pub fn import_config(app: AppHandle, path: String) -> Result<ImportSummary, Stri
     let (summary, stopped) = {
         let state = app.state::<AppState>();
         let mut config = state.snapshot();
+        let changed = transfer::changes_terms_of(&bundle);
         let summary = transfer::import(&mut config, bundle)?;
         let stopped: Vec<String> = config
             .profiles
             .iter()
-            .filter(|p| !p.enabled)
+            .filter(|p| changed(p))
             .map(|p| p.id.clone())
             .collect();
+        // Before the new config goes in, not after. The config is about to say
+        // these are off, and without this a profile the import replaced, or one
+        // whose connection it repointed, keeps syncing on the old terms. A run
+        // waiting for its turn looks its terms up again when it arrives, so it
+        // has to be withdrawn before there is anything unreviewed to find.
+        for id in &stopped {
+            engine::stop(&app, id);
+        }
         // replace_collections deliberately leaves settings alone (see its own
         // doc comment) — preferences opted into the bundle are the one case an
         // import does carry, so they're written back separately.
@@ -226,11 +235,7 @@ pub fn import_config(app: AppHandle, path: String) -> Result<ImportSummary, Stri
         (summary, stopped)
     };
 
-    // The config now says these are off; the watchers still running from before
-    // the import have to be told. Without this a profile the import replaced —
-    // or one whose connection it repointed — keeps syncing on the old terms.
     for id in stopped {
-        engine::stop(&app, &id);
         state::set_status(&app, &id, "disabled", None);
     }
 
@@ -418,6 +423,28 @@ pub async fn test_connection(candidate: Connection) -> Result<String, String> {
 
 /// Create or update a profile. The watcher is restarted from the saved values
 /// so an edit to source, excludes or debounce takes effect immediately.
+/// Save a profile and put it in place, returning it as stored.
+fn store_profile(state: &AppState, mut incoming: Profile) -> Result<Profile, String> {
+    let mut config = state.snapshot();
+    match config.profiles.iter_mut().find(|p| p.id == incoming.id) {
+        Some(existing) => *existing = incoming.clone(),
+        None => {
+            // A new profile goes after everything already in its level.
+            incoming.position = u32::MAX;
+            config.profiles.push(incoming.clone());
+        }
+    }
+    folder::renumber(&mut config);
+    if let Some(stored) = config.profiles.iter().find(|p| p.id == incoming.id) {
+        incoming = stored.clone();
+    }
+    // Saved before it goes live. A run looks its terms up again when its turn
+    // comes, so an edit that failed to save would still redirect it.
+    store::save(&state.config_dir, &config)?;
+    state.replace_collections(config);
+    Ok(incoming)
+}
+
 #[tauri::command]
 pub fn save_profile(app: AppHandle, mut incoming: Profile) -> Result<Profile, String> {
     incoming.validate()?;
@@ -432,24 +459,7 @@ pub fn save_profile(app: AppHandle, mut incoming: Profile) -> Result<Profile, St
         incoming.id = Uuid::new_v4().to_string();
     }
 
-    {
-        let state = app.state::<AppState>();
-        let mut config = state.snapshot();
-        match config.profiles.iter_mut().find(|p| p.id == incoming.id) {
-            Some(existing) => *existing = incoming.clone(),
-            None => {
-                // A new profile goes after everything already in its level.
-                incoming.position = u32::MAX;
-                config.profiles.push(incoming.clone());
-            }
-        }
-        folder::renumber(&mut config);
-        if let Some(stored) = config.profiles.iter().find(|p| p.id == incoming.id) {
-            incoming = stored.clone();
-        }
-        state.replace_collections(config);
-    }
-    app.state::<AppState>().persist()?;
+    let incoming = store_profile(app.state::<AppState>().inner(), incoming)?;
 
     engine::stop(&app, &incoming.id);
     if incoming.enabled {
@@ -504,7 +514,13 @@ fn start_unless_paused(app: &AppHandle, profile: &Profile) -> Result<(), String>
         state::set_status(app, &profile.id, "paused", None);
         return Ok(());
     }
-    engine::start(app, profile)
+    let started = engine::start(app, profile);
+    if let Err(err) = &started {
+        // Starting stops first, which withdraws any queued one-off, and nothing
+        // else is left to write. The row would stay on "queued" for good.
+        state::set_status(app, &profile.id, "error", Some(err.clone()));
+    }
+    started
 }
 
 /// Suspend or resume every profile at once.
@@ -555,16 +571,12 @@ pub fn set_profile_enabled(app: AppHandle, id: String, enabled: bool) -> Result<
 /// paused one gets a detached one-off pass so "Sync now" still works.
 #[tauri::command]
 pub fn sync_now(app: AppHandle, id: String) -> Result<(), String> {
-    let profile = {
-        let state = app.state::<AppState>();
-        let profiles = state.profiles.lock().unwrap();
-        profiles
-            .iter()
-            .find(|p| p.id == id)
-            .cloned()
-            .ok_or_else(|| "Profile not found.".to_string())?
-    };
-    queue_sync(&app, &profile)
+    let state = app.state::<AppState>();
+    let asked_at = state.times_stopped(&id);
+    let profile = state
+        .profile(&id)
+        .ok_or_else(|| "Profile not found.".to_string())?;
+    queue_sync(&app, &profile, asked_at)
 }
 
 /// Queue one sync for a profile.
@@ -572,18 +584,43 @@ pub fn sync_now(app: AppHandle, id: String) -> Result<(), String> {
 /// A watched profile gets it on its existing loop, which keeps the debounce and
 /// coalescing behaviour. One that is not running — paused either way — gets a
 /// detached one-off pass instead, so an explicit request always does something.
-fn queue_sync(app: &AppHandle, profile: &Profile) -> Result<(), String> {
+/// `asked_at` is [`AppState::times_stopped`] from when the user asked.
+fn queue_sync(app: &AppHandle, profile: &Profile, asked_at: u64) -> Result<(), String> {
     if engine::trigger(app, &profile.id, Trigger::Manual) {
         return Ok(());
     }
     profile.validate()?;
 
     let app = app.clone();
-    let profile = profile.clone();
+    let id = profile.id.clone();
     tauri::async_runtime::spawn(async move {
-        engine::run_once(&app, &profile).await;
+        engine::run_detached(&app, &id, asked_at).await;
     });
     Ok(())
+}
+
+/// Profiles that share an SSH master, with the connection to open it through.
+///
+/// Keyed like `AppState::session_limit`, so two records with one login warm one
+/// master instead of racing to create it. A profile whose connection is gone
+/// still gets a group of its own, because `queue_sync` is what reports on it.
+fn group_by_master(
+    profiles: Vec<Profile>,
+    connection_of: impl Fn(&str) -> Option<Connection>,
+) -> Vec<(Option<Connection>, Vec<Profile>)> {
+    let mut groups: HashMap<String, (Option<Connection>, Vec<Profile>)> = HashMap::new();
+    for profile in profiles {
+        let connection = connection_of(&profile.connection_id);
+        let master = connection
+            .as_ref()
+            .map_or_else(|| profile.connection_id.clone(), Connection::control_path);
+        groups
+            .entry(master)
+            .or_insert_with(|| (connection, Vec::new()))
+            .1
+            .push(profile);
+    }
+    groups.into_values().collect()
 }
 
 /// Sync every enabled profile at once.
@@ -607,8 +644,8 @@ pub fn sync_all(app: AppHandle) -> Result<usize, String> {
         .collect();
     let queued = profiles.len();
 
-    // Grouped by connection, and each group opens its own SSH master before its
-    // profiles start.
+    // Grouped by SSH master, and each group opens its own before its profiles
+    // start.
     //
     // Every rsync runs its own ssh with `ControlMaster=auto`. Started together,
     // they all find no socket, all try to become the master, and every loser
@@ -616,18 +653,10 @@ pub fn sync_all(app: AppHandle) -> Result<usize, String> {
     // dials its own connection — one handshake per profile, which is the cost
     // the socket exists to avoid.
     //
-    // A group per connection rather than one queue for all of them, so a host
+    // A group per master rather than one queue for all of them, so a host
     // that is down holds up only its own profiles for the connect timeout.
-    let mut by_connection: HashMap<String, Vec<Profile>> = HashMap::new();
-    for profile in profiles {
-        by_connection
-            .entry(profile.connection_id.clone())
-            .or_default()
-            .push(profile);
-    }
-
-    for (id, group) in by_connection {
-        let connection = state.connection(&id);
+    for (connection, group) in group_by_master(profiles, |id| state.connection(id)) {
+        let asked_at: Vec<u64> = group.iter().map(|p| state.times_stopped(&p.id)).collect();
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
             if let Some(connection) = connection {
@@ -635,8 +664,14 @@ pub fn sync_all(app: AppHandle) -> Result<usize, String> {
                 // makes the same connection and reports the real reason.
                 let _ = connection::test(&connection).await;
             }
-            for profile in &group {
-                if let Err(err) = queue_sync(&app, profile) {
+            for (profile, asked_at) in group.iter().zip(asked_at) {
+                // The warm-up can take seconds on a slow host. Pausing, editing or
+                // deleting a profile in that time takes back this request, so it
+                // goes no further.
+                if app.state::<AppState>().times_stopped(&profile.id) != asked_at {
+                    continue;
+                }
+                if let Err(err) = queue_sync(&app, profile, asked_at) {
                     state::set_status(&app, &profile.id, "error", Some(err));
                 }
             }
@@ -644,4 +679,119 @@ pub fn sync_all(app: AppHandle) -> Result<usize, String> {
     }
 
     Ok(queued)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::path::PathBuf;
+
+    use crate::store::Config;
+
+    fn connection(id: &str, host: &str) -> Connection {
+        Connection {
+            id: id.into(),
+            name: id.into(),
+            user: "deploy".into(),
+            host: host.into(),
+            port: 22,
+            identity_file: String::new(),
+        }
+    }
+
+    fn profile(id: &str, connection_id: &str) -> Profile {
+        Profile {
+            id: id.into(),
+            name: id.into(),
+            source: "/tmp/src".into(),
+            connection_id: connection_id.into(),
+            remote_path: "/srv/data".into(),
+            enabled: true,
+            delete: true,
+            excludes: Vec::new(),
+            debounce_ms: 500,
+            folder_id: None,
+            position: 0,
+        }
+    }
+
+    fn grouped(profiles: Vec<Profile>, connections: Vec<Connection>) -> Vec<(Option<Connection>, Vec<Profile>)> {
+        group_by_master(profiles, |id| connections.iter().find(|c| c.id == id).cloned())
+    }
+
+    #[test]
+    fn an_edit_that_fails_to_save_does_not_go_live() {
+        // Runs look their terms up again, so it would redirect a sync to a
+        // destination the user had just been told was not saved. A file cannot
+        // have a directory under it, so this config directory can never be made.
+        let config = Config {
+            profiles: vec![profile("p1", "c1")],
+            ..Config::default()
+        };
+        let state = AppState::new(PathBuf::from("/dev/null/config"), config);
+        let mut edited = profile("p1", "c1");
+        edited.remote_path = "/srv/edited".into();
+
+        assert!(store_profile(&state, edited).is_err());
+
+        assert_eq!(state.profile("p1").unwrap().remote_path, "/srv/data");
+    }
+
+    #[test]
+    fn a_saved_edit_goes_live_and_reaches_the_disk() {
+        let dir = std::env::temp_dir().join(format!("syncpoint-test-{}", Uuid::new_v4()));
+        let config = Config {
+            profiles: vec![profile("p1", "c1")],
+            ..Config::default()
+        };
+        let state = AppState::new(dir.clone(), config);
+        let mut edited = profile("p1", "c1");
+        edited.remote_path = "/srv/edited".into();
+
+        let stored = store_profile(&state, edited).unwrap();
+
+        assert_eq!(stored.remote_path, "/srv/edited");
+        assert_eq!(state.profile("p1").unwrap().remote_path, "/srv/edited");
+        assert_eq!(store::load(&dir).profiles[0].remote_path, "/srv/edited");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn records_with_one_login_warm_one_master() {
+        // Warmed apart, they race to create the socket and the loser pays a
+        // second handshake for a login that needed one.
+        let groups = grouped(
+            vec![profile("a", "prod"), profile("b", "staging"), profile("c", "prod")],
+            vec![connection("prod", "example.com"), connection("staging", "example.com")],
+        );
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].1.len(), 3);
+        assert!(groups[0].0.is_some());
+    }
+
+    #[test]
+    fn different_logins_warm_apart_so_a_dead_host_holds_up_only_its_own() {
+        let groups = grouped(
+            vec![profile("a", "one"), profile("b", "two")],
+            vec![connection("one", "example.com"), connection("two", "example.org")],
+        );
+
+        assert_eq!(groups.len(), 2);
+    }
+
+    #[test]
+    fn a_profile_whose_connection_is_gone_still_gets_queued() {
+        // queue_sync is what tells the user, so it has to be reached, and the
+        // group must not pick up some other profile's connection to warm.
+        let groups = grouped(
+            vec![profile("a", "gone"), profile("b", "here")],
+            vec![connection("here", "example.com")],
+        );
+
+        assert_eq!(groups.len(), 2);
+        let orphan = groups.iter().find(|(c, _)| c.is_none()).unwrap();
+        assert_eq!(orphan.1[0].id, "a");
+    }
 }

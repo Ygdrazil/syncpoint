@@ -93,6 +93,16 @@ pub fn export(
     }
 }
 
+/// Which profiles a bundle changes the terms of: those it names, and those on a
+/// connection it names, running or not. Only these have a queued "Sync now" to
+/// withdraw. One on a profile the bundle never mentions is still what the user
+/// asked for.
+pub fn changes_terms_of(bundle: &Bundle) -> impl Fn(&Profile) -> bool {
+    let profiles: HashSet<String> = bundle.profiles.iter().map(|p| p.id.clone()).collect();
+    let connections: HashSet<String> = bundle.connections.iter().map(|c| c.id.clone()).collect();
+    move |profile| profiles.contains(&profile.id) || connections.contains(&profile.connection_id)
+}
+
 /// Merge a bundle into the existing config, matching on id.
 ///
 /// Merging rather than replacing means importing onto a populated app adds to
@@ -130,6 +140,9 @@ pub fn import(config: &mut Config, bundle: Bundle) -> Result<ImportSummary, Stri
                 summary.connections_updated += 1;
             }
             None => {
+                // A profile left pointing at this id, after its connection was
+                // deleted, gets a destination from this bundle just the same.
+                repointed.insert(incoming.id.clone());
                 config.connections.push(incoming);
                 summary.connections_added += 1;
             }
@@ -341,6 +354,35 @@ mod tests {
         assert_eq!(target.settings.default_remote_prefix, "/srv");
         assert_eq!(target.settings.default_local_root, "/Users/me");
         assert_eq!(target.settings.default_debounce_ms, 250);
+    }
+
+    #[test]
+    fn an_import_only_changes_the_terms_of_what_it_names() {
+        let mut named = profile("named", "elsewhere");
+        named.enabled = true;
+        let on_named_connection = profile("on-it", "c-named");
+        let unrelated = profile("unrelated", "elsewhere");
+
+        let changed = changes_terms_of(&bundle(vec![connection("c-named")], vec![profile("named", "x")]));
+
+        assert!(changed(&named));
+        assert!(changed(&on_named_connection));
+        assert!(!changed(&unrelated));
+    }
+
+    #[test]
+    fn a_connection_arriving_under_a_dangling_id_pauses_what_points_at_it() {
+        // The profile's connection was deleted, so it was going nowhere. This
+        // bundle would otherwise hand it a destination nobody has reviewed.
+        let mut cfg = Config::default();
+        let mut waiting = profile("p1", "c-gone");
+        waiting.enabled = true;
+        cfg.profiles.push(waiting);
+
+        let summary = import(&mut cfg, bundle(vec![connection("c-gone")], vec![])).unwrap();
+
+        assert!(!cfg.profiles[0].enabled);
+        assert_eq!(summary.profiles_disabled, 1);
     }
 
     #[test]
