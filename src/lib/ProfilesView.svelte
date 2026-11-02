@@ -7,6 +7,7 @@
   import ConfirmDialog from "$lib/ConfirmDialog.svelte";
   import PromptDialog from "$lib/PromptDialog.svelte";
   import Toasts from "$lib/Toasts.svelte";
+  import WhatsNewDialog from "$lib/WhatsNewDialog.svelte";
   import {
     connectionTarget,
     emptyProfile,
@@ -20,7 +21,8 @@
     type SyncProgress,
     type SyncState,
     type SyncStatus,
-    type Toast
+    type Toast,
+    type WhatsNew
   } from "$lib/types";
 
   const MAX_LOG_LINES = 500;
@@ -32,6 +34,7 @@
   let logs = $state<Record<string, LogLine[]>>({});
   let rsync = $state<RsyncInfo | null>(null);
   let settings = $state<Settings | null>(null);
+  let whatsNew = $state<WhatsNew | null>(null);
   let progress = $state<Record<string, SyncProgress>>({});
   // Ticks so relative "last sync" labels do not go stale on screen.
   let now = $state(Date.now());
@@ -517,6 +520,10 @@
     ];
 
     api.getRsyncInfo().then((info) => (rsync = info));
+    api
+      .whatsNewOnLaunch()
+      .then((found) => (whatsNew = found))
+      .catch(() => {});
     refresh();
 
     const tick = setInterval(() => (now = Date.now()), 30_000);
@@ -854,6 +861,16 @@
 {/if}
 
 <Toasts {toasts} ondismiss={dismissToast} />
+
+{#if whatsNew}
+  <WhatsNewDialog
+    {whatsNew}
+    onclosed={(neverAgain) => {
+      whatsNew = null;
+      api.dismissWhatsNew(neverAgain).catch(() => {});
+    }}
+  />
+{/if}
 
 <div class="app" class:compact>
   <aside>

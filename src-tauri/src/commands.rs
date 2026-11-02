@@ -21,6 +21,7 @@ use crate::template;
 use crate::folder::{self, Folder, ItemKind};
 use crate::transfer::{self, Bundle, ImportSummary};
 use crate::version;
+use crate::whats_new::{self, WhatsNew};
 
 /// How long the profiles behind a warm-up wait for it. ConnectTimeout only covers
 /// reaching the host, so without this an ssh that hangs after that would leave
@@ -167,7 +168,13 @@ pub fn save_settings(app: AppHandle, mut incoming: Settings) -> Result<Settings,
     incoming.validate()?;
     incoming.normalize();
     apply_autostart(&app, incoming.open_at_startup)?;
-    *app.state::<AppState>().settings.lock().unwrap() = incoming.clone();
+    {
+        let state = app.state::<AppState>();
+        let mut settings = state.settings.lock().unwrap();
+        // A settings window loaded before the popup closed must not bring it back.
+        incoming.last_seen_version = settings.last_seen_version.clone();
+        *settings = incoming.clone();
+    }
     commit(&app)?;
     Ok(incoming)
 }
@@ -431,6 +438,31 @@ pub async fn test_connection(candidate: Connection) -> Result<String, String> {
 
 /// Create or update a profile. The watcher is restarted from the saved values
 /// so an edit to source, excludes or debounce takes effect immediately.
+/// What the What's new popup has to show on this launch, if anything.
+#[tauri::command]
+pub fn whats_new_on_launch(state: State<'_, AppState>) -> Result<Option<WhatsNew>, String> {
+    let (found, changed) = {
+        let mut settings = state.settings.lock().unwrap();
+        let before = settings.last_seen_version.clone();
+        let found = whats_new::on_launch(&mut settings, &version::describe());
+        (found, settings.last_seen_version != before)
+    };
+    if changed {
+        state.persist()?;
+    }
+    Ok(found)
+}
+
+#[tauri::command]
+pub fn dismiss_whats_new(app: AppHandle, never_again: bool) -> Result<(), String> {
+    {
+        let state = app.state::<AppState>();
+        let mut settings = state.settings.lock().unwrap();
+        whats_new::dismiss(&mut settings, &version::describe(), never_again);
+    }
+    commit(&app)
+}
+
 /// A new profile's paths as they stand, from whatever its form holds so far.
 #[tauri::command]
 pub fn render_profile_paths(state: State<'_, AppState>, draft: Profile) -> template::Rendered {

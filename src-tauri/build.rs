@@ -1,8 +1,26 @@
+use std::path::Path;
 use std::process::Command;
 
 fn main() {
     emit_version();
+    emit_changelog();
     tauri_build::build()
+}
+
+/// Bake the commit log into the binary for `whats_new`, which is what reads it.
+/// No git (a source tarball) leaves it empty, which just means no popup.
+fn emit_changelog() {
+    let log = Command::new("git")
+        .args(["log", "--decorate-refs=refs/tags/", "--format=%D%x09%s"])
+        .current_dir("..")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| output.stdout)
+        .unwrap_or_default();
+    let out_dir = std::env::var("OUT_DIR").expect("cargo sets OUT_DIR for build scripts");
+    std::fs::write(Path::new(&out_dir).join("changelog.txt"), log)
+        .expect("OUT_DIR is writable");
 }
 
 /// Bake the version derived from git into the binary as `SYNCPOINT_VERSION`.
@@ -15,9 +33,10 @@ fn emit_version() {
     println!("cargo:rustc-env=SYNCPOINT_VERSION={version}");
 
     // Without these, cargo caches the build script's output and the baked-in
-    // version goes stale the moment a new tag or commit lands.
+    // version and log go stale the moment a new tag or commit lands.
     for path in [
         "../.git/HEAD",
+        "../.git/logs/HEAD", // moves on every commit, which HEAD itself does not
         "../.git/refs/tags",
         "../.git/packed-refs", // where tags end up once git packs them
     ] {

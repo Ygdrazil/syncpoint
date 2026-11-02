@@ -33,6 +33,10 @@ fn default_debounce_ms() -> u64 {
     500
 }
 
+fn default_show_whats_new() -> bool {
+    true
+}
+
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,6 +77,13 @@ pub struct Settings {
     /// switching on profiles that were deliberately left off.
     #[serde(default)]
     pub paused: bool,
+    /// Whether launching after an update shows what changed.
+    #[serde(default = "default_show_whats_new")]
+    pub show_whats_new: bool,
+    /// The version the What's new popup last covered. Owned by the backend:
+    /// `save_settings` keeps its own copy over whatever a window sends back.
+    #[serde(default)]
+    pub last_seen_version: Option<String>,
 }
 
 impl Settings {
@@ -139,6 +150,8 @@ impl Default for Settings {
             default_debounce_ms: default_debounce_ms(),
             compact: false,
             paused: false,
+            show_whats_new: default_show_whats_new(),
+            last_seen_version: None,
         }
     }
 }

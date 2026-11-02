@@ -126,6 +126,13 @@ export type Settings = {
   compact: boolean;
   /// Global suspend; leaves each profile's own enabled flag untouched.
   paused: boolean;
+  /// Whether launching after an update shows what changed.
+  showWhatsNew: boolean;
+};
+
+export type WhatsNew = {
+  version: string;
+  changes: { kind: "added" | "changed" | "fixed"; text: string }[];
 };
 
 /// A new profile's paths, from the templates in `Settings`.

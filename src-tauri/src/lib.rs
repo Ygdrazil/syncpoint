@@ -14,6 +14,7 @@ mod template;
 mod transfer;
 mod tray;
 mod version;
+mod whats_new;
 
 use state::AppState;
 use tauri::Manager;
@@ -107,6 +108,8 @@ pub fn run() {
             commands::save_connection,
             commands::delete_connection,
             commands::test_connection,
+            commands::whats_new_on_launch,
+            commands::dismiss_whats_new,
             commands::render_profile_paths,
             commands::preview_path_templates,
             commands::save_profile,

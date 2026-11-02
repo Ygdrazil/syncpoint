@@ -49,6 +49,7 @@ Because each window is a separate webview (separate JS realm), there is no share
 | `rsync/stream.rs` | Batches stdout/stderr into throttled UI events, parses `--info=progress2` lines |
 | `connection.rs` | SSH connection record + injection-safe arg building + live `ssh` test |
 | `profile.rs` | Sync profile record + destination-safety validation |
+| `whats_new.rs` | The "What's new ?" popup, whose list comes from commit titles baked in by `build.rs` |
 | `template.rs` | The path templates that prefill a new profile's source and target (`/home/code/dev/{slug}`) |
 | `folder.rs` | The folder tree profiles live in (folders and profiles share one ordering per level) |
 | `transfer.rs` | Export/import bundles (merge-by-id, re-validates untrusted input) |
@@ -63,6 +64,8 @@ One `notify` watcher + one unbounded `mpsc` channel per enabled profile (`engine
 ### Destination-safety invariants
 
 `Connection::check_safe()` (leading-`-` and whitespace rejected in host/user/identity-file — otherwise `ssh` reads a hostile value as a flag, e.g. `-oProxyCommand=...`) is deliberately separate from `Connection::validate()` (machine-local checks, e.g. does this key file exist *here*). `transfer::import` calls `check_safe()` on every incoming connection but not the full `validate()`, because an imported bundle may legitimately name a key path from a different Mac — that's a reason it can't run yet, not a reason to reject the import. Keep that split if you touch either path.
+
+Commit titles are user-facing. `feat:` shows as Added in the What's new popup, `change:` as Changed and `fix:` as Fixed, word for word, so write those titles as a line a user can read, and use another type (`chore:`, `docs:`, `refactor:`) for anything they would not notice. The description below the title stays for developers.
 
 Path templates only ever prefill a form. What gets saved is plain text, so changing a template can never move an existing profile's destination; don't re-render a saved profile. A value with nothing to give stays in the path as `{slug}` rather than disappearing, because `/home/code/dev/{slug}` with no slug would otherwise sync onto `/home/code/dev/` with delete on, and `Profile::validate` refuses a path still holding one.
 

@@ -10,7 +10,8 @@ import type {
   RenderedPaths,
   RsyncInfo,
   Settings,
-  SyncStatus
+  SyncStatus,
+  WhatsNew
 } from "./types";
 
 export const listProfiles = () => invoke<Profile[]>("list_profiles");
@@ -50,6 +51,10 @@ export const exportConfig = (
   includePreferences: boolean
 ) => invoke<number>("export_config", { path, includeConnections, includePreferences });
 export const importConfig = (path: string) => invoke<ImportSummary>("import_config", { path });
+
+export const whatsNewOnLaunch = () => invoke<WhatsNew | null>("whats_new_on_launch");
+export const dismissWhatsNew = (neverAgain: boolean) =>
+  invoke<void>("dismiss_whats_new", { neverAgain });
 
 export const getSettings = () => invoke<Settings>("get_settings");
 export const saveSettings = (incoming: Settings) => invoke<Settings>("save_settings", { incoming });
