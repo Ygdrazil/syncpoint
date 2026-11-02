@@ -1,3 +1,5 @@
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::OnceLock;
@@ -8,11 +10,6 @@ use tokio::process::Command;
 /// Reuse one SSH connection across syncs. Without this every rsync run pays a
 /// fresh TCP + key exchange (~0.5-1s), which dwarfs the transfer itself for the
 /// small, frequent syncs a file watcher produces.
-///
-/// `%C` is a short hash of (local host, remote host, port, user), which keeps
-/// the socket path well under the ~104 byte unix socket limit. `~/.ssh` is used
-/// rather than a world-writable directory like /tmp.
-const CONTROL_PATH: &str = "~/.ssh/syncpoint-cm-%C";
 const CONTROL_PERSIST_SECS: u32 = 300;
 
 /// How long ssh waits for a TCP connection before giving up.
@@ -148,6 +145,40 @@ impl Connection {
         }
     }
 
+    /// Where this connection's ssh master listens. `~/.ssh` rather than a
+    /// world-writable directory like /tmp.
+    ///
+    /// `%C` hashes what ssh resolved, so pointing an alias in ~/.ssh/config at a
+    /// new host opens a new master rather than syncing on to the old one. But it
+    /// leaves out the identity file, so a second key to the same user@host:port
+    /// would ride the first key's master and its own `-i` would never be used.
+    /// Hence the second hash. It covers the whole login, not only the key,
+    /// because `AppState::session_limit` keys on this string unexpanded, where
+    /// `%C` tells it nothing: two records with the same login share a master and
+    /// a gate, and two different logins share neither.
+    ///
+    /// Short because the budget is tight: ssh first binds this path plus 17
+    /// bytes, a unix socket path holds 103, and `%C` alone takes 40. Overflowing
+    /// makes ssh exit 255 rather than just lose the reuse, and this leaves room
+    /// for an account name of 21 characters.
+    ///
+    /// `DefaultHasher` may change between Rust releases. That costs one extra
+    /// handshake at most, since a master only outlives its last client by
+    /// [`CONTROL_PERSIST_SECS`].
+    pub fn control_path(&self) -> String {
+        let mut hasher = DefaultHasher::new();
+        // Trimmed as they are on their way to ssh: the same login must mean the
+        // same master.
+        (
+            self.user.trim(),
+            self.host.trim(),
+            self.port,
+            self.identity_file.trim(),
+        )
+            .hash(&mut hasher);
+        format!("~/.ssh/sp-{:08x}-%C", hasher.finish() as u32)
+    }
+
     /// Everything after the `ssh` word. No element may contain whitespace:
     /// rsync re-splits the joined string when this is passed via `-e`.
     pub fn ssh_args(&self) -> Vec<String> {
@@ -166,7 +197,7 @@ impl Connection {
         args.push("-o".to_string());
         args.push("ControlMaster=auto".to_string());
         args.push("-o".to_string());
-        args.push(format!("ControlPath={CONTROL_PATH}"));
+        args.push(format!("ControlPath={}", self.control_path()));
         args.push("-o".to_string());
         args.push(format!("ControlPersist={CONTROL_PERSIST_SECS}"));
         // A missing key or unknown host fails immediately with a readable
@@ -276,6 +307,78 @@ mod tests {
     }
 
     #[test]
+    fn a_second_key_to_the_same_host_gets_its_own_master() {
+        // A master keeps the identity it logged in with, so sharing one would
+        // quietly run the second connection as the first connection's key.
+        let mut work = connection();
+        work.identity_file = "~/.ssh/id_work".into();
+        let mut personal = connection();
+        personal.identity_file = "~/.ssh/id_personal".into();
+
+        assert_ne!(work.control_path(), personal.control_path());
+        assert_ne!(work.control_path(), connection().control_path());
+    }
+
+    #[test]
+    fn the_socket_name_follows_what_ssh_config_resolves() {
+        // %C is the only part of the name that sees ~/.ssh/config. Without it,
+        // pointing an alias at a new host would reuse the live master and keep
+        // syncing to the old one for as long as files keep changing.
+        assert!(connection().control_path().ends_with("-%C"));
+    }
+
+    #[test]
+    fn a_different_login_never_shares_a_master() {
+        let mut other_user = connection();
+        other_user.user = "root".into();
+        let mut other_host = connection();
+        other_host.host = "example.org".into();
+        let mut other_port = connection();
+        other_port.port = 22;
+
+        for other in [other_user, other_host, other_port] {
+            assert_ne!(other.control_path(), connection().control_path());
+        }
+    }
+
+    #[test]
+    fn identical_logins_share_one_master() {
+        // The whole point of multiplexing. What ssh receives is trimmed, and the
+        // record's name and id never reach it, so neither may split the master.
+        let mut c = connection();
+        c.identity_file = "~/.ssh/id_work".into();
+        let mut same = connection();
+        same.id = "c2".into();
+        same.name = "staging".into();
+        same.user = " deploy ".into();
+        same.host = " example.com ".into();
+        same.identity_file = " ~/.ssh/id_work ".into();
+
+        assert_eq!(c.control_path(), same.control_path());
+    }
+
+    #[test]
+    fn the_control_socket_fits_under_a_long_home_directory() {
+        // ssh binds this path plus ".XXXXXXXXXXXXXXXX" before moving it into
+        // place (mux.c, muxserver_listen), and exits 255 if that overflows
+        // sun_path. Any `%` token but %C, whose 40 hex digits are known, would
+        // expand to a length this could not see.
+        const TEMPORARY_SUFFIX: usize = 17;
+        const SUN_PATH_MAX: usize = 103;
+
+        let path = connection().control_path();
+        assert_eq!(path.matches('%').count(), 1, "{path}");
+        let expanded = path
+            .replacen('~', &format!("/Users/{}", "a".repeat(21)), 1)
+            .replacen("%C", &"0".repeat(40), 1);
+        assert!(
+            expanded.len() + TEMPORARY_SUFFIX <= SUN_PATH_MAX,
+            "{expanded} is {} bytes before the suffix",
+            expanded.len()
+        );
+    }
+
+    #[test]
     fn ssh_command_always_carries_batch_mode_and_connection_reuse() {
         let command = connection().ssh_command();
         let program = command.split_whitespace().next().unwrap();
@@ -287,6 +390,7 @@ mod tests {
         assert!(command.contains("BatchMode=yes"));
         assert!(command.contains("ControlMaster=auto"));
         assert!(command.contains("ControlPersist="));
+        assert!(command.contains(&format!("ControlPath={}", connection().control_path())));
     }
 
     #[test]
